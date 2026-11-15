@@ -25,7 +25,11 @@ service cloud.firestore {
     }
 
     function isVerifiedUser() {
-      return isSignedIn() && (request.auth.token.email_verified == true || request.auth.token.firebase.sign_in_provider == 'custom');
+      return isSignedIn() && (
+        request.auth.token.email_verified == true ||
+        request.auth.token.firebase.sign_in_provider == 'custom' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
     }
 
     function isBootstrappedAdmin() {
@@ -46,11 +50,26 @@ service cloud.firestore {
     // --- Validation Blueprints ---
     function isValidAdminUser(data) {
       return data.keys().hasAll(['uid', 'email', 'role', 'createdAt']) &&
-        data.keys().hasOnly(['uid', 'email', 'role', 'createdAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'phone', 'role', 'createdAt']) &&
         isValidId(data.uid) &&
         data.email is string && data.email.size() >= 3 && data.email.size() <= 200 &&
+        (!('phone' in data) || (data.phone is string && data.phone.size() <= 20)) &&
         data.role == 'admin' &&
         data.createdAt is timestamp;
+    }
+
+    function isValidAdminCredential(data) {
+      return data.keys().hasAll(['phoneNormalized', 'adminUid', 'authEmail', 'passwordHash', 'passwordSalt', 'updatedBy', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['phoneNormalized', 'adminUid', 'authEmail', 'displayName', 'passwordHash', 'passwordSalt', 'updatedBy', 'createdAt', 'updatedAt']) &&
+        data.phoneNormalized is string && data.phoneNormalized.size() >= 6 && data.phoneNormalized.size() <= 20 && data.phoneNormalized.matches('^[0-9]+$') &&
+        isValidId(data.adminUid) &&
+        data.authEmail is string && data.authEmail.size() >= 5 && data.authEmail.size() <= 160 &&
+        (!('displayName' in data) || (data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120)) &&
+        data.passwordHash is string && data.passwordHash.size() >= 32 && data.passwordHash.size() <= 256 &&
+        data.passwordSalt is string && data.passwordSalt.size() >= 16 && data.passwordSalt.size() <= 128 &&
+        isValidId(data.updatedBy) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
     }
 
     function isValidUserAccount(data) {
@@ -306,8 +325,8 @@ service cloud.firestore {
     }
 
     match /admins/{uid} {
-      allow get: if isValidId(uid) && (isBootstrappedAdmin() || (isSignedIn() && request.auth.uid == uid));
-      allow list: if isBootstrappedAdmin();
+      allow get: if isValidId(uid) && (isAdmin() || (isSignedIn() && request.auth.uid == uid));
+      allow list: if isAdmin();
       allow create: if isValidId(uid) && isBootstrappedAdmin() &&
         isValidAdminUser(incoming()) &&
         incoming().uid == uid &&
@@ -315,9 +334,28 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    match /adminCredentials/{phoneNormalized} {
+      allow get: if isValidId(phoneNormalized) && isAdmin();
+      allow list: if isAdmin();
+      allow create: if isValidId(phoneNormalized) && isBootstrappedAdmin() &&
+        isValidAdminCredential(incoming()) &&
+        incoming().phoneNormalized == phoneNormalized &&
+        incoming().updatedBy == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(phoneNormalized) && isAdmin() &&
+        isValidAdminCredential(incoming()) &&
+        incoming().phoneNormalized == existing().phoneNormalized &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedBy == request.auth.uid &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['adminUid', 'authEmail', 'displayName', 'passwordHash', 'passwordSalt', 'updatedBy', 'updatedAt']);
+      allow delete: if isValidId(phoneNormalized) && isBootstrappedAdmin();
+    }
+
     match /users/{uid} {
       allow get: if isValidId(uid) && (isAdmin() || (isSignedIn() && request.auth.uid == uid));
-      allow list: if isBootstrappedAdmin();
+      allow list: if isAdmin();
       allow create: if isValidId(uid) && isAdmin() &&
         isValidUserAccount(incoming()) &&
         incoming().uid == uid &&
@@ -334,7 +372,7 @@ service cloud.firestore {
 
     match /members/{memberId} {
       allow get: if isValidId(memberId) && (isAdmin() || (isSignedIn() && existing().memberUid == request.auth.uid));
-      allow list: if isBootstrappedAdmin() || (isSignedIn() && resource.data.memberUid == request.auth.uid);
+      allow list: if isAdmin() || (isSignedIn() && resource.data.memberUid == request.auth.uid);
       allow create: if isValidId(memberId) && isAdmin() && isVerifiedUser() &&
         isValidMember(incoming()) &&
         incoming().memberId == memberId &&
@@ -355,7 +393,7 @@ service cloud.firestore {
 
     match /memberCredentials/{phoneNormalized} {
       allow get: if isValidId(phoneNormalized) && isAdmin();
-      allow list: if isBootstrappedAdmin();
+      allow list: if isAdmin();
       allow create: if isValidId(phoneNormalized) && isAdmin() && isVerifiedUser() &&
         isValidMemberCredential(incoming()) &&
         incoming().phoneNormalized == phoneNormalized &&
@@ -373,7 +411,7 @@ service cloud.firestore {
 
     match /attendance/{recordId} {
       allow get: if isValidId(recordId) && (isAdmin() || (isSignedIn() && existing().memberUid == request.auth.uid));
-      allow list: if isBootstrappedAdmin() || (isSignedIn() && resource.data.memberUid == request.auth.uid);
+      allow list: if isAdmin() || (isSignedIn() && resource.data.memberUid == request.auth.uid);
       allow create: if isValidId(recordId) && isAdmin() && isVerifiedUser() &&
         isValidAttendance(incoming()) &&
         incoming().recordId == recordId &&
@@ -394,7 +432,7 @@ service cloud.firestore {
 
     match /overtimeRecords/{recordId} {
       allow get: if isValidId(recordId) && (isAdmin() || (isSignedIn() && existing().memberUid == request.auth.uid));
-      allow list: if isBootstrappedAdmin() || (isSignedIn() && resource.data.memberUid == request.auth.uid);
+      allow list: if isAdmin() || (isSignedIn() && resource.data.memberUid == request.auth.uid);
       allow create: if isValidId(recordId) && isAdmin() && isVerifiedUser() &&
         isValidOvertime(incoming()) &&
         incoming().recordId == recordId &&
@@ -415,7 +453,7 @@ service cloud.firestore {
 
     match /salaryRecords/{recordId} {
       allow get: if isValidId(recordId) && (isAdmin() || (isSignedIn() && existing().memberUid == request.auth.uid));
-      allow list: if isBootstrappedAdmin() || (isSignedIn() && resource.data.memberUid == request.auth.uid);
+      allow list: if isAdmin() || (isSignedIn() && resource.data.memberUid == request.auth.uid);
       allow create: if isValidId(recordId) && isAdmin() && isVerifiedUser() &&
         isValidSalaryRecord(incoming()) &&
         incoming().recordId == recordId &&
@@ -440,7 +478,7 @@ service cloud.firestore {
 
     match /advances/{advanceId} {
       allow get: if isValidId(advanceId) && (isAdmin() || (isSignedIn() && existing().memberUid == request.auth.uid));
-      allow list: if isBootstrappedAdmin() || (isSignedIn() && resource.data.memberUid == request.auth.uid);
+      allow list: if isAdmin() || (isSignedIn() && resource.data.memberUid == request.auth.uid);
       allow create: if isValidId(advanceId) && isAdmin() && isVerifiedUser() &&
         isValidAdvance(incoming()) &&
         incoming().advanceId == advanceId &&
@@ -461,7 +499,7 @@ service cloud.firestore {
 
     match /payments/{paymentId} {
       allow get: if isValidId(paymentId) && (isAdmin() || (isSignedIn() && existing().memberUid == request.auth.uid));
-      allow list: if isBootstrappedAdmin() || (isSignedIn() && resource.data.memberUid == request.auth.uid);
+      allow list: if isAdmin() || (isSignedIn() && resource.data.memberUid == request.auth.uid);
       allow create: if isValidId(paymentId) && isAdmin() && isVerifiedUser() &&
         isValidPayment(incoming()) &&
         incoming().paymentId == paymentId &&
@@ -482,7 +520,7 @@ service cloud.firestore {
 
     match /salarySlips/{slipId} {
       allow get: if isValidId(slipId) && (isAdmin() || (isSignedIn() && existing().memberUid == request.auth.uid));
-      allow list: if isBootstrappedAdmin() || (isSignedIn() && resource.data.memberUid == request.auth.uid);
+      allow list: if isAdmin() || (isSignedIn() && resource.data.memberUid == request.auth.uid);
       allow create: if isValidId(slipId) && isAdmin() && isVerifiedUser() &&
         isValidSalarySlip(incoming()) &&
         incoming().slipId == slipId &&
@@ -495,7 +533,7 @@ service cloud.firestore {
 
     match /settings/{settingId} {
       allow get: if isValidId(settingId) && isSignedIn();
-      allow list: if isBootstrappedAdmin();
+      allow list: if isAdmin();
       allow create: if isValidId(settingId) && isAdmin() && isVerifiedUser() &&
         isValidSettings(incoming()) &&
         incoming().settingId == settingId &&
@@ -516,7 +554,7 @@ service cloud.firestore {
 
     match /notifications/{notificationId} {
       allow get: if isValidId(notificationId) && (isAdmin() || (isSignedIn() && existing().memberUid == request.auth.uid));
-      allow list: if isBootstrappedAdmin() || (isSignedIn() && resource.data.memberUid == request.auth.uid);
+      allow list: if isAdmin() || (isSignedIn() && resource.data.memberUid == request.auth.uid);
       allow create: if isValidId(notificationId) && isAdmin() && isVerifiedUser() &&
         isValidNotification(incoming()) &&
         incoming().notificationId == notificationId &&
@@ -534,7 +572,7 @@ service cloud.firestore {
 
     match /activityLogs/{logId} {
       allow get: if isValidId(logId) && isAdmin();
-      allow list: if isBootstrappedAdmin();
+      allow list: if isAdmin();
       allow create: if isValidId(logId) && isAdmin() && isVerifiedUser() &&
         isValidActivityLog(incoming()) &&
         incoming().logId == logId &&

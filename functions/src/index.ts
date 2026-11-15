@@ -16,6 +16,10 @@ function phoneToAuthEmail(phoneNormalized: string): string {
   return `m_${phoneNormalized}@sagar-mgmt.local`;
 }
 
+function adminPhoneToAuthEmail(phoneNormalized: string): string {
+  return `admin_${phoneNormalized}@sagar-mgmt.local`;
+}
+
 function hashPassword(password: string, salt?: string): { hash: string; salt: string } {
   const actualSalt = salt || crypto.randomBytes(16).toString('hex');
   const hash = crypto.scryptSync(password, actualSalt, 64).toString('hex');
@@ -36,6 +40,91 @@ async function assertAdmin(request: { auth?: { uid: string; token: Record<string
     throw new HttpsError('permission-denied', 'Admin privileges are required.');
   }
 }
+
+export const setupFirstAdmin = onCall(async (request) => {
+  await assertAdmin(request);
+
+  const { phone, password, displayName, allowUpdate } = request.data as {
+    phone?: string;
+    password?: string;
+    displayName?: string;
+    allowUpdate?: boolean;
+  };
+
+  const phoneNorm = normalizePhone(String(phone || ''));
+  if (phoneNorm.length < 10) {
+    throw new HttpsError('invalid-argument', 'Valid 10-digit Admin mobile number is required.');
+  }
+  const rawPassword = String(password || '');
+  if (rawPassword.length < 8) {
+    throw new HttpsError('invalid-argument', 'Admin password must be at least 8 characters.');
+  }
+
+  if (!allowUpdate) {
+    const existingCreds = await db.collection('adminCredentials').limit(1).get();
+    if (!existingCreds.empty) {
+      throw new HttpsError('already-exists', 'First Admin is already configured.');
+    }
+  }
+
+  const authEmail = adminPhoneToAuthEmail(phoneNorm);
+  const cleanName = String(displayName || 'SAGAR MANAGEMENT Admin').trim().slice(0, 120);
+  let userRecord: admin.auth.UserRecord;
+  try {
+    userRecord = await auth.getUserByEmail(authEmail);
+    await auth.updateUser(userRecord.uid, {
+      password: rawPassword,
+      displayName: cleanName,
+      disabled: false,
+      emailVerified: true,
+    });
+  } catch {
+    userRecord = await auth.createUser({
+      email: authEmail,
+      password: rawPassword,
+      displayName: cleanName,
+      emailVerified: true,
+    });
+  }
+
+  await auth.setCustomUserClaims(userRecord.uid, { role: 'admin', phone: phoneNorm });
+  const { hash, salt } = hashPassword(rawPassword);
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const batch = db.batch();
+
+  batch.set(db.collection('admins').doc(userRecord.uid), {
+    uid: userRecord.uid,
+    email: authEmail,
+    phone: phoneNorm,
+    role: 'admin',
+    createdAt: now,
+  });
+
+  batch.set(db.collection('adminCredentials').doc(phoneNorm), {
+    phoneNormalized: phoneNorm,
+    adminUid: userRecord.uid,
+    authEmail,
+    displayName: cleanName,
+    passwordHash: hash,
+    passwordSalt: salt,
+    updatedBy: request.auth!.uid,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  batch.set(db.collection('users').doc(userRecord.uid), {
+    uid: userRecord.uid,
+    role: 'admin',
+    phone: phoneNorm,
+    displayName: cleanName,
+    status: 'active',
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  await batch.commit();
+  return { ok: true, adminUid: userRecord.uid, phoneNormalized: phoneNorm, authEmail };
+});
 
 export const createMemberAccount = onCall(async (request) => {
   await assertAdmin(request);

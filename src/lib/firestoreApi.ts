@@ -8,6 +8,7 @@ import {
   updateDoc,
 } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadString } from 'firebase/storage';
+import { apiUrl, hasConfiguredApiBase, isNativePlatform } from './apiClient';
 import { auth, db, handleFirestoreError, OperationType, storage } from './firebase';
 import type {
   AdvanceTransaction,
@@ -98,6 +99,122 @@ export async function ensureAdminBootstrap(): Promise<void> {
   }
 }
 
+export async function provisionAdminMobileCredentials(input: {
+  phone: string;
+  password: string;
+  currentPassword?: string;
+  displayName?: string;
+  allowUpdate?: boolean;
+}): Promise<{ phoneNormalized: string; authEmail: string; adminUid: string }> {
+  const user = auth.currentUser;
+  if (!user) throw new Error('Owner/Admin authentication required.');
+  if (isNativePlatform() && !hasConfiguredApiBase()) {
+    throw new Error(
+      'Backend API URL (VITE_API_BASE_URL) is not configured in this APK. Complete First-Time Admin Setup on the web app or configure VITE_API_BASE_URL before building.'
+    );
+  }
+  const idToken = await user.getIdToken();
+
+  const resp = await fetch(apiUrl('/api/admin/setup-first-admin'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({
+      phone: input.phone,
+      password: input.password,
+      currentPassword: input.currentPassword,
+      displayName: input.displayName,
+      allowUpdate: Boolean(input.allowUpdate),
+    }),
+  });
+
+  const prep = (await resp.json()) as {
+    ok?: boolean;
+    error?: string;
+    phoneNormalized: string;
+    authEmail: string;
+    adminUid: string;
+    displayName: string;
+    passwordHash: string;
+    passwordSalt: string;
+  };
+
+  if (!resp.ok || !prep.ok) {
+    throw new Error(prep.error || 'Failed to provision Admin credentials.');
+  }
+
+  try {
+    const adminRef = doc(db, 'admins', prep.adminUid);
+    const adminSnap = await getDoc(adminRef);
+    if (!adminSnap.exists()) {
+      await setDoc(adminRef, {
+        uid: prep.adminUid,
+        email: prep.authEmail,
+        phone: prep.phoneNormalized,
+        role: 'admin',
+        createdAt: serverTimestamp(),
+      });
+    }
+
+    const credRef = doc(db, 'adminCredentials', prep.phoneNormalized);
+    const credSnap = await getDoc(credRef);
+    if (credSnap.exists()) {
+      await updateDoc(credRef, {
+        adminUid: prep.adminUid,
+        authEmail: prep.authEmail,
+        displayName: prep.displayName,
+        passwordHash: prep.passwordHash,
+        passwordSalt: prep.passwordSalt,
+        updatedBy: user.uid,
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      await setDoc(credRef, {
+        phoneNormalized: prep.phoneNormalized,
+        adminUid: prep.adminUid,
+        authEmail: prep.authEmail,
+        displayName: prep.displayName,
+        passwordHash: prep.passwordHash,
+        passwordSalt: prep.passwordSalt,
+        updatedBy: user.uid,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+
+    const userRef = doc(db, 'users', prep.adminUid);
+    const userSnap = await getDoc(userRef);
+    if (!userSnap.exists()) {
+      await setDoc(userRef, {
+        uid: prep.adminUid,
+        role: 'admin',
+        phone: prep.phoneNormalized,
+        displayName: prep.displayName,
+        status: 'active',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+
+    await logActivity(
+      'SETUP_ADMIN_CREDENTIALS',
+      'adminCredentials',
+      prep.phoneNormalized,
+      `Configured secure Admin mobile login (${prep.phoneNormalized})`
+    );
+
+    return {
+      phoneNormalized: prep.phoneNormalized,
+      authEmail: prep.authEmail,
+      adminUid: prep.adminUid,
+    };
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `adminCredentials/${prep.phoneNormalized}`);
+  }
+}
+
 export async function saveAppSettings(
   data: Omit<AppSettings, 'settingId' | 'updatedBy' | 'updatedAt'>
 ): Promise<void> {
@@ -144,10 +261,15 @@ export async function createMemberWithCredentials(input: {
 }): Promise<string> {
   const user = auth.currentUser;
   if (!user) throw new Error('Admin authentication required.');
+  if (isNativePlatform() && !hasConfiguredApiBase()) {
+    throw new Error(
+      'Backend API URL (VITE_API_BASE_URL) is not configured in this APK. Add members from the web app or set VITE_API_BASE_URL before building.'
+    );
+  }
   const idToken = await user.getIdToken();
   const memberId = makeId('SM');
 
-  const prepResp = await fetch('/api/admin/members/prepare', {
+  const prepResp = await fetch(apiUrl('/api/admin/members/prepare'), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -243,9 +365,14 @@ export async function resetMemberPasswordByAdmin(
 ): Promise<void> {
   const user = auth.currentUser;
   if (!user) throw new Error('Admin authentication required.');
+  if (isNativePlatform() && !hasConfiguredApiBase()) {
+    throw new Error(
+      'Backend API URL (VITE_API_BASE_URL) is not configured in this APK. Reset member passwords from the web app or set VITE_API_BASE_URL.'
+    );
+  }
   const idToken = await user.getIdToken();
 
-  const resp = await fetch('/api/admin/members/reset-password', {
+  const resp = await fetch(apiUrl('/api/admin/members/reset-password'), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -290,15 +417,17 @@ export async function deleteMemberRecord(member: Member): Promise<void> {
   const user = auth.currentUser;
   if (!user) throw new Error('Admin authentication required.');
   try {
-    const idToken = await user.getIdToken();
-    await fetch('/api/admin/members/delete-auth', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${idToken}`,
-      },
-      body: JSON.stringify({ memberUid: member.memberUid }),
-    }).catch(() => {});
+    if (!isNativePlatform() || hasConfiguredApiBase()) {
+      const idToken = await user.getIdToken();
+      await fetch(apiUrl('/api/admin/members/delete-auth'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ memberUid: member.memberUid }),
+      }).catch(() => {});
+    }
 
     await deleteDoc(doc(db, 'members', member.memberId));
     await deleteDoc(doc(db, 'memberCredentials', member.phone)).catch(() => {});

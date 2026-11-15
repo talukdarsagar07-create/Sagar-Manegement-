@@ -12,6 +12,7 @@ dotenv.config();
 
 interface FirebaseAppletConfig {
   projectId: string;
+  appId?: string;
   apiKey: string;
   authDomain: string;
   firestoreDatabaseId?: string;
@@ -72,6 +73,10 @@ function phoneToAuthEmail(phoneNormalized: string): string {
   return `m_${phoneNormalized}@sagar-mgmt.local`;
 }
 
+function adminPhoneToAuthEmail(phoneNormalized: string): string {
+  return `admin_${phoneNormalized}@sagar-mgmt.local`;
+}
+
 function hashPassword(password: string, salt?: string): { hash: string; salt: string } {
   const actualSalt = salt || crypto.randomBytes(16).toString('hex');
   const hash = crypto.scryptSync(password, actualSalt, 64).toString('hex');
@@ -123,6 +128,41 @@ interface VerifiedUser {
   uid: string;
   email: string;
   emailVerified: boolean;
+  isOwner: boolean;
+  idToken: string;
+}
+
+function getFirestoreRestBase(): string {
+  const dbId = firebaseConfig.firestoreDatabaseId || '(default)';
+  return `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(firebaseConfig.projectId)}/databases/${encodeURIComponent(dbId)}/documents`;
+}
+
+async function checkAdminDocViaRest(uid: string, idToken: string): Promise<boolean> {
+  try {
+    const resp = await fetch(`${getFirestoreRestBase()}/admins/${encodeURIComponent(uid)}`, {
+      headers: { Authorization: `Bearer ${idToken}` },
+    });
+    if (!resp.ok) return false;
+    const doc = (await resp.json()) as {
+      fields?: { role?: { stringValue?: string } };
+    };
+    return doc.fields?.role?.stringValue === 'admin';
+  } catch {
+    return false;
+  }
+}
+
+async function checkAnyAdminCredentialExistsViaRest(idToken: string): Promise<boolean> {
+  try {
+    const resp = await fetch(`${getFirestoreRestBase()}/adminCredentials?pageSize=1`, {
+      headers: { Authorization: `Bearer ${idToken}` },
+    });
+    if (!resp.ok) return false;
+    const data = (await resp.json()) as { documents?: unknown[] };
+    return Array.isArray(data.documents) && data.documents.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 async function verifyAdminBearerToken(authHeader: string | undefined): Promise<VerifiedUser | null> {
@@ -155,19 +195,39 @@ async function verifyAdminBearerToken(authHeader: string | undefined): Promise<V
         uid: user.localId,
         email: user.email || '',
         emailVerified: Boolean(user.emailVerified),
+        isOwner: true,
+        idToken,
       };
     }
 
     if (adminDb) {
-      const adminSnap = await adminDb.collection('admins').doc(user.localId).get();
-      if (adminSnap.exists) {
-        return {
-          uid: user.localId,
-          email: user.email || '',
-          emailVerified: Boolean(user.emailVerified),
-        };
+      try {
+        const adminSnap = await adminDb.collection('admins').doc(user.localId).get();
+        if (adminSnap.exists) {
+          return {
+            uid: user.localId,
+            email: user.email || '',
+            emailVerified: Boolean(user.emailVerified),
+            isOwner: false,
+            idToken,
+          };
+        }
+      } catch {
+        // Fallback to Firestore REST verification with caller's ID token when container lacks IAM creds
       }
     }
+
+    const existsViaRest = await checkAdminDocViaRest(user.localId, idToken);
+    if (existsViaRest) {
+      return {
+        uid: user.localId,
+        email: user.email || '',
+        emailVerified: Boolean(user.emailVerified),
+        isOwner: false,
+        idToken,
+      };
+    }
+
     return null;
   } catch {
     return null;
@@ -176,6 +236,20 @@ async function verifyAdminBearerToken(authHeader: string | undefined): Promise<V
 
 async function startServer() {
   const app = express();
+  app.use('/api', (req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+    }
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
+    if (req.method === 'OPTIONS') {
+      res.sendStatus(204);
+      return;
+    }
+    next();
+  });
   app.use(express.json({ limit: '2mb' }));
 
   app.get('/api/health', async (_req, res) => {
@@ -191,9 +265,486 @@ async function startServer() {
     res.json({
       ok: true,
       projectId: firebaseConfig.projectId,
+      firestoreDatabaseId: firebaseConfig.firestoreDatabaseId || '(default)',
       adminInitialized,
       adminFirestoreReady,
     });
+  });
+
+  app.get('/api/auth/provider-status', async (_req, res) => {
+    const missingFields: string[] = [];
+    if (!firebaseConfig.projectId || firebaseConfig.projectId === 'remixed-project-id') {
+      missingFields.push('projectId');
+    }
+    if (!firebaseConfig.apiKey) missingFields.push('apiKey');
+    if (!firebaseConfig.authDomain) missingFields.push('authDomain');
+    if (!firebaseConfig.appId) missingFields.push('appId');
+
+    if (missingFields.length > 0) {
+      res.status(500).json({
+        ok: false,
+        configValid: false,
+        missingFields,
+        projectId: firebaseConfig.projectId || '',
+        firestoreDatabaseId: firebaseConfig.firestoreDatabaseId || '(default)',
+        emailPasswordEnabled: false,
+        authInitialized: false,
+        statusCode: 'MISSING_FIREBASE_CONFIG',
+        detailMessage: `Missing or invalid Firebase configuration fields: ${missingFields.join(', ')}`,
+      });
+      return;
+    }
+
+    let projectNumber = '';
+    let authorizedDomains: string[] = [];
+    let authInitialized = true;
+    let emailPasswordEnabled = false;
+    let statusCode = 'UNKNOWN';
+    let detailMessage = '';
+
+    try {
+      const cfgResp = await fetch(
+        `https://www.googleapis.com/identitytoolkit/v3/relyingparty/getProjectConfig?key=${encodeURIComponent(firebaseConfig.apiKey)}`
+      );
+      if (cfgResp.ok) {
+        const cfgData = (await cfgResp.json()) as {
+          projectId?: string;
+          authorizedDomains?: string[];
+        };
+        projectNumber = cfgData.projectId || '';
+        authorizedDomains = cfgData.authorizedDomains || [];
+      } else {
+        const errBody = (await cfgResp.json().catch(() => ({}))) as {
+          error?: { message?: string };
+        };
+        const cfgErr = errBody.error?.message || `HTTP_${cfgResp.status}`;
+        if (cfgErr.includes('CONFIGURATION_NOT_FOUND')) {
+          authInitialized = false;
+        }
+      }
+
+      const probeResp = await fetch(
+        `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(firebaseConfig.apiKey)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: '__provider_probe_nonexistent__@sagar-mgmt.local',
+            password: 'ProbeCheckPassword!99',
+            returnSecureToken: true,
+          }),
+        }
+      );
+      const probeData = (await probeResp.json().catch(() => ({}))) as {
+        error?: { message?: string };
+      };
+      const probeCode = probeData.error?.message || (probeResp.ok ? 'OK' : `HTTP_${probeResp.status}`);
+
+      if (
+        probeCode === 'EMAIL_NOT_FOUND' ||
+        probeCode === 'INVALID_LOGIN_CREDENTIALS' ||
+        probeCode === 'INVALID_PASSWORD' ||
+        probeCode === 'TOO_MANY_ATTEMPTS_TRY_LATER' ||
+        probeCode === 'OK'
+      ) {
+        emailPasswordEnabled = true;
+        statusCode = 'ENABLED';
+        detailMessage = `Email/Password Authentication is active on Firebase project ${firebaseConfig.projectId}${projectNumber ? ` (#${projectNumber})` : ''}.`;
+      } else if (probeCode.includes('CONFIGURATION_NOT_FOUND')) {
+        authInitialized = false;
+        emailPasswordEnabled = false;
+        statusCode = probeCode;
+        detailMessage = `Firebase Authentication is not initialized on project ${firebaseConfig.projectId}.`;
+      } else if (
+        probeCode.includes('PASSWORD_LOGIN_DISABLED') ||
+        probeCode.includes('OPERATION_NOT_ALLOWED')
+      ) {
+        emailPasswordEnabled = false;
+        statusCode = probeCode;
+        detailMessage = `Email/Password sign-in is disabled on Firebase project ${firebaseConfig.projectId}${projectNumber ? ` (#${projectNumber})` : ''} (${probeCode}).`;
+      } else {
+        statusCode = probeCode;
+        detailMessage = `Firebase Auth returned status: ${probeCode}`;
+      }
+    } catch (err) {
+      statusCode = 'NETWORK_ERROR';
+      detailMessage = err instanceof Error ? err.message : 'Unable to reach Firebase Auth API.';
+    }
+
+    res.json({
+      ok: true,
+      configValid: true,
+      projectId: firebaseConfig.projectId,
+      projectNumber,
+      authDomain: firebaseConfig.authDomain,
+      firestoreDatabaseId: firebaseConfig.firestoreDatabaseId || '(default)',
+      authorizedDomains,
+      authInitialized,
+      emailPasswordEnabled,
+      statusCode,
+      detailMessage,
+      providersConsoleUrl: `https://console.firebase.google.com/project/${encodeURIComponent(firebaseConfig.projectId)}/authentication/providers`,
+    });
+  });
+
+  // First-Admin Setup & Admin Mobile Credential Provisioning
+  // Authorized ONLY for the bootstrapped owner or an already-verified Admin
+  app.post('/api/admin/setup-first-admin', async (req, res) => {
+    const adminUser = await verifyAdminBearerToken(req.headers.authorization);
+    if (!adminUser) {
+      res.status(401).json({
+        error: 'Unauthorized: Verify ownership with the authorized Admin account first.',
+      });
+      return;
+    }
+
+    const { phone, password, currentPassword, displayName, allowUpdate } = req.body as {
+      phone?: string;
+      password?: string;
+      currentPassword?: string;
+      displayName?: string;
+      allowUpdate?: boolean;
+    };
+
+    const phoneNorm = normalizePhone(String(phone || ''));
+    if (phoneNorm.length < 10) {
+      res.status(400).json({ error: 'Valid 10-digit Admin mobile number is required.' });
+      return;
+    }
+
+    const rawPassword = String(password || '');
+    const strongPassword =
+      rawPassword.length >= 8 &&
+      /[A-Z]/.test(rawPassword) &&
+      /[a-z]/.test(rawPassword) &&
+      /[0-9]/.test(rawPassword) &&
+      /[^A-Za-z0-9]/.test(rawPassword);
+
+    if (!strongPassword) {
+      res.status(400).json({
+        error:
+          'Password must be at least 8 characters and include uppercase, lowercase, number, and special character.',
+      });
+      return;
+    }
+
+    // Lock one-time first-admin setup unless an authenticated Admin explicitly updates credentials
+    if (!allowUpdate) {
+      let alreadyConfigured = false;
+      if (adminDb) {
+        try {
+          const existingCreds = await adminDb.collection('adminCredentials').limit(1).get();
+          alreadyConfigured = !existingCreds.empty;
+        } catch {
+          alreadyConfigured = await checkAnyAdminCredentialExistsViaRest(adminUser.idToken);
+        }
+      } else {
+        alreadyConfigured = await checkAnyAdminCredentialExistsViaRest(adminUser.idToken);
+      }
+
+      if (alreadyConfigured) {
+        res.status(409).json({
+          error:
+            'First Admin mobile login is already configured. Sign in as Admin and update credentials from Settings.',
+        });
+        return;
+      }
+    }
+
+    const authEmail = adminPhoneToAuthEmail(phoneNorm);
+    const cleanDisplayName = (displayName || 'SAGAR MANAGEMENT Admin').trim().slice(0, 120);
+    const { hash, salt } = hashPassword(rawPassword);
+    let adminUid = '';
+    let firebaseAuthProvisioned = false;
+
+    // 1. Try Firebase Admin SDK when IAM credentials are attached
+    if (adminInitialized && adminApp) {
+      try {
+        const adminAuth = getAuth(adminApp);
+        let userRecord: UserRecord;
+        try {
+          userRecord = await adminAuth.getUserByEmail(authEmail);
+          await adminAuth.updateUser(userRecord.uid, {
+            password: rawPassword,
+            displayName: cleanDisplayName,
+            disabled: false,
+            emailVerified: true,
+          });
+        } catch {
+          userRecord = await adminAuth.createUser({
+            email: authEmail,
+            password: rawPassword,
+            displayName: cleanDisplayName,
+            emailVerified: true,
+          });
+        }
+        adminUid = userRecord.uid;
+        await adminAuth.setCustomUserClaims(adminUid, {
+          role: 'admin',
+          phone: phoneNorm,
+        });
+        firebaseAuthProvisioned = true;
+      } catch {
+        firebaseAuthProvisioned = false;
+      }
+    }
+
+    // 2. Try Firebase Auth Identity Toolkit REST API (works without IAM private key when Email/Password is enabled)
+    if (!firebaseAuthProvisioned) {
+      try {
+        const signUpResp = await fetch(
+          `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${encodeURIComponent(firebaseConfig.apiKey)}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              email: authEmail,
+              password: rawPassword,
+              displayName: cleanDisplayName,
+              returnSecureToken: true,
+            }),
+          }
+        );
+        const signUpData = (await signUpResp.json()) as {
+          localId?: string;
+          idToken?: string;
+          error?: { message?: string };
+        };
+
+        if (signUpResp.ok && signUpData.localId) {
+          adminUid = signUpData.localId;
+          firebaseAuthProvisioned = true;
+        } else if (signUpData.error?.message === 'EMAIL_EXISTS') {
+          const passwordToCheck = currentPassword ? String(currentPassword) : rawPassword;
+          const signInResp = await fetch(
+            `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(firebaseConfig.apiKey)}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                email: authEmail,
+                password: passwordToCheck,
+                returnSecureToken: true,
+              }),
+            }
+          );
+          const signInData = (await signInResp.json()) as {
+            localId?: string;
+            idToken?: string;
+            error?: { message?: string };
+          };
+          if (signInResp.ok && signInData.localId && signInData.idToken) {
+            if (currentPassword && currentPassword !== rawPassword) {
+              const updateResp = await fetch(
+                `https://identitytoolkit.googleapis.com/v1/accounts:update?key=${encodeURIComponent(firebaseConfig.apiKey)}`,
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    idToken: signInData.idToken,
+                    password: rawPassword,
+                    displayName: cleanDisplayName,
+                    returnSecureToken: true,
+                  }),
+                }
+              );
+              if (!updateResp.ok) {
+                res.status(400).json({ error: 'Failed to update Admin password in Firebase Auth.' });
+                return;
+              }
+            }
+            adminUid = signInData.localId;
+            firebaseAuthProvisioned = true;
+          } else {
+            res.status(409).json({
+              error: currentPassword
+                ? 'Current Admin password did not match.'
+                : 'An Admin Auth account for this mobile number already exists. Provide the current password or reset it in Firebase Console → Authentication → Users.',
+            });
+            return;
+          }
+        } else {
+          const errCode = signUpData.error?.message || 'AUTH_PROVISION_FAILED';
+          if (
+            errCode.includes('OPERATION_NOT_ALLOWED') ||
+            errCode.includes('PASSWORD_LOGIN_DISABLED')
+          ) {
+            res.status(412).json({
+              code: errCode,
+              projectId: firebaseConfig.projectId,
+              error: `Email/Password sign-in is currently disabled on Firebase project "${firebaseConfig.projectId}" (${errCode}). Open Firebase Console for project "${firebaseConfig.projectId}" → Authentication → Sign-in method → Email/Password → Enable → Save, then retry.`,
+            });
+            return;
+          }
+          if (
+            errCode.includes('ADMIN_ONLY_OPERATION') ||
+            errCode.includes('EMAIL_SIGNUP_DISABLED')
+          ) {
+            res.status(412).json({
+              code: errCode,
+              projectId: firebaseConfig.projectId,
+              error: `User sign-up is restricted on Firebase project "${firebaseConfig.projectId}" (${errCode}). In Firebase Console → Authentication → Settings → User actions, enable "Enable create (sign-up)", then retry.`,
+            });
+            return;
+          }
+          if (errCode.includes('CONFIGURATION_NOT_FOUND')) {
+            res.status(412).json({
+              code: errCode,
+              projectId: firebaseConfig.projectId,
+              error: `Firebase Authentication is not initialized on project "${firebaseConfig.projectId}" (${errCode}). Open Authentication → Get started in Firebase Console for "${firebaseConfig.projectId}".`,
+            });
+            return;
+          }
+          res.status(400).json({
+            code: errCode,
+            projectId: firebaseConfig.projectId,
+            error: `Firebase Auth setup failed on project "${firebaseConfig.projectId}": ${errCode}`,
+          });
+          return;
+        }
+      } catch (err) {
+        res.status(502).json({
+          error:
+            err instanceof Error
+              ? err.message
+              : 'Failed to connect to Firebase Authentication.',
+        });
+        return;
+      }
+    }
+
+    if (!adminUid) {
+      res.status(500).json({
+        error: `Firebase Authentication did not return an Admin UID for project "${firebaseConfig.projectId}".`,
+      });
+      return;
+    }
+
+    // Never return raw password; return salted hash metadata for Firestore security-ruled persistence
+    res.json({
+      ok: true,
+      phoneNormalized: phoneNorm,
+      authEmail,
+      adminUid,
+      displayName: cleanDisplayName,
+      passwordHash: hash,
+      passwordSalt: salt,
+      firebaseAuthProvisioned,
+    });
+  });
+
+  // Admin Login: Mobile Number + Password
+  app.post('/api/auth/admin-login', async (req, res) => {
+    const { phone, password } = req.body as { phone?: string; password?: string };
+    const phoneNorm = normalizePhone(String(phone || ''));
+    const rawPassword = String(password || '');
+
+    if (phoneNorm.length < 10 || !rawPassword) {
+      res.status(400).json({ error: 'Valid 10-digit Admin mobile number and password are required.' });
+      return;
+    }
+
+    const authEmail = adminPhoneToAuthEmail(phoneNorm);
+
+    // 1. Verify against Firestore adminCredentials + scrypt hash when Admin DB is available
+    if (adminDb) {
+      try {
+        const credDoc = await adminDb.collection('adminCredentials').doc(phoneNorm).get();
+        if (credDoc.exists) {
+          const cred = credDoc.data() as {
+            adminUid: string;
+            passwordHash: string;
+            passwordSalt: string;
+            authEmail: string;
+          };
+          const valid = verifyPassword(rawPassword, cred.passwordHash, cred.passwordSalt);
+          if (!valid) {
+            res.status(401).json({ error: 'Invalid Admin mobile number or password.' });
+            return;
+          }
+          const adminSnap = await adminDb.collection('admins').doc(cred.adminUid).get();
+          if (!adminSnap.exists) {
+            res.status(403).json({ error: 'Account does not have Admin authorization.' });
+            return;
+          }
+          if (adminInitialized && adminApp) {
+            try {
+              const customToken = await getAuth(adminApp).createCustomToken(cred.adminUid, {
+                role: 'admin',
+                phone: phoneNorm,
+              });
+              res.json({
+                ok: true,
+                mode: 'custom_token',
+                customToken,
+                authEmail: cred.authEmail || authEmail,
+                adminUid: cred.adminUid,
+              });
+              return;
+            } catch {
+              // Fall through to Firebase Auth REST verification
+            }
+          }
+        }
+      } catch {
+        // Admin DB lookup unavailable in local preview without IAM key; use Firebase Auth REST + Firestore REST
+      }
+    }
+
+    // 2. Verify via Firebase Auth Identity Toolkit REST API + Firestore /admins/{uid} check
+    try {
+      const restResp = await fetch(
+        `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(firebaseConfig.apiKey)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: authEmail, password: rawPassword, returnSecureToken: true }),
+        }
+      );
+      const restData = (await restResp.json()) as {
+        localId?: string;
+        idToken?: string;
+        error?: { message?: string };
+      };
+
+      if (!restResp.ok || !restData.localId || !restData.idToken) {
+        const errCode = restData.error?.message || '';
+        if (
+          errCode.includes('PASSWORD_LOGIN_DISABLED') ||
+          errCode.includes('OPERATION_NOT_ALLOWED') ||
+          errCode.includes('CONFIGURATION_NOT_FOUND')
+        ) {
+          res.status(412).json({
+            code: errCode,
+            projectId: firebaseConfig.projectId,
+            error: `Email/Password sign-in is disabled on Firebase project "${firebaseConfig.projectId}" (${errCode}). Enable Authentication → Sign-in method → Email/Password in Firebase Console for "${firebaseConfig.projectId}".`,
+          });
+          return;
+        }
+        res.status(401).json({ error: 'Invalid Admin mobile number or password.' });
+        return;
+      }
+
+      const isRegisteredAdmin = await checkAdminDocViaRest(restData.localId, restData.idToken);
+      if (!isRegisteredAdmin) {
+        res.status(403).json({
+          error:
+            'This account is not authorized as an Admin. Complete First-Time Admin Setup with the owner account first.',
+        });
+        return;
+      }
+
+      res.json({
+        ok: true,
+        mode: 'email_password',
+        authEmail,
+        adminUid: restData.localId,
+      });
+    } catch (err) {
+      res.status(502).json({
+        error: err instanceof Error ? err.message : 'Admin authentication service unavailable.',
+      });
+    }
   });
 
   // Admin: Hash member password & optionally provision Firebase Auth user
@@ -254,6 +805,32 @@ async function startServer() {
       } catch {
         // Fallback if Firebase Admin Auth doesn't have IAM credentials in local sandbox
         authUserCreated = false;
+      }
+    }
+
+    // Fallback: provision member in Firebase Auth via Identity Toolkit REST when Email/Password is enabled
+    if (!authUserCreated) {
+      try {
+        const signUpResp = await fetch(
+          `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${encodeURIComponent(firebaseConfig.apiKey)}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              email: authEmail,
+              password,
+              displayName: fullName || `Worker ${phoneNorm}`,
+              returnSecureToken: true,
+            }),
+          }
+        );
+        const signUpData = (await signUpResp.json()) as { localId?: string };
+        if (signUpResp.ok && signUpData.localId) {
+          memberUid = signUpData.localId;
+          authUserCreated = true;
+        }
+      } catch {
+        // Keep scrypt member_ fallback
       }
     }
 
@@ -366,6 +943,21 @@ async function startServer() {
         }
         res.json({ ok: true, mode: 'email_password', authEmail });
         return;
+      } else {
+        const errBody = (await restResp.json().catch(() => ({}))) as { error?: { message?: string } };
+        const errCode = errBody.error?.message || '';
+        if (
+          errCode.includes('PASSWORD_LOGIN_DISABLED') ||
+          errCode.includes('OPERATION_NOT_ALLOWED') ||
+          errCode.includes('CONFIGURATION_NOT_FOUND')
+        ) {
+          res.status(412).json({
+            code: errCode,
+            projectId: firebaseConfig.projectId,
+            error: `Email/Password sign-in is disabled on Firebase project "${firebaseConfig.projectId}" (${errCode}). Enable Authentication → Sign-in method → Email/Password in Firebase Console for "${firebaseConfig.projectId}".`,
+          });
+          return;
+        }
       }
     } catch {
       // Continue to Firestore scrypt verification
@@ -568,10 +1160,97 @@ async function startServer() {
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        hmr: process.env.DISABLE_HMR === 'true' ? false : undefined,
+        hmr: false,
+        ws: false,
       },
       appType: 'spa',
     });
+
+    // Vite 8 client.mjs unconditionally executes transport.connect() -> new WebSocket()
+    // even when hmr: false and ws: false. Serve a clean WebSocket-free client shim that
+    // preserves CSS style injection and import.meta.hot compatibility without WebSockets.
+    const noopViteClient = `
+const sheetsMap = new Map();
+const linkSheetsMap = new Map();
+if ("document" in globalThis) {
+  document.querySelectorAll("style[data-vite-dev-id]").forEach((el) => {
+    sheetsMap.set(el.getAttribute("data-vite-dev-id"), el);
+  });
+  document.querySelectorAll('link[rel="stylesheet"][data-vite-dev-id]').forEach((el) => {
+    linkSheetsMap.set(el.getAttribute("data-vite-dev-id"), el);
+  });
+}
+let lastInsertedStyle;
+function updateStyle(id, content) {
+  if (linkSheetsMap.has(id)) return;
+  let style = sheetsMap.get(id);
+  if (!style) {
+    style = document.createElement("style");
+    style.setAttribute("type", "text/css");
+    style.setAttribute("data-vite-dev-id", id);
+    style.textContent = content;
+    if (!lastInsertedStyle) {
+      document.head.appendChild(style);
+      setTimeout(() => {
+        lastInsertedStyle = void 0;
+      }, 0);
+    } else {
+      lastInsertedStyle.insertAdjacentElement("afterend", style);
+    }
+    lastInsertedStyle = style;
+  } else if (style.textContent !== content) {
+    style.textContent = content;
+  }
+  sheetsMap.set(id, style);
+}
+function removeStyle(id) {
+  if (linkSheetsMap.has(id)) {
+    document
+      .querySelectorAll('link[rel="stylesheet"][data-vite-dev-id="' + CSS.escape(id) + '"]')
+      .forEach((el) => el.remove());
+    linkSheetsMap.delete(id);
+  }
+  const style = sheetsMap.get(id);
+  if (style) {
+    document.head.removeChild(style);
+    sheetsMap.delete(id);
+  }
+}
+function createHotContext() {
+  const noop = () => {};
+  return {
+    data: {},
+    accept: noop,
+    acceptExports: noop,
+    dispose: noop,
+    prune: noop,
+    invalidate: noop,
+    decline: noop,
+    on: noop,
+    off: noop,
+    send: noop,
+  };
+}
+function injectQuery(url, queryToInject) {
+  if (url[0] !== "." && url[0] !== "/") return url;
+  const pathname = url.replace(/[?#].*$/, "");
+  const { search, hash } = new URL(url, "http://vite.dev");
+  return pathname + "?" + queryToInject + (search ? "&" + search.slice(1) : "") + (hash || "");
+}
+class ErrorOverlay extends HTMLElement {
+  close() {
+    this.remove();
+  }
+}
+export { ErrorOverlay, createHotContext, injectQuery, removeStyle, updateStyle };
+`.trimStart();
+
+    app.get('/@vite/client', (_req, res) => {
+      res.type('application/javascript; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.send(noopViteClient);
+    });
+
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(rootDir, 'dist');

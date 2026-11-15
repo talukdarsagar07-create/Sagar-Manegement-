@@ -1,10 +1,15 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Database,
+  ExternalLink,
+  Eye,
+  EyeOff,
   FileSpreadsheet,
   FileText,
   History,
+  RefreshCw,
   Settings as SettingsIcon,
+  ShieldCheck,
   Upload,
 } from 'lucide-react';
 import {
@@ -15,7 +20,15 @@ import {
   todayISO,
 } from '../lib/accounting';
 import { exportCSV, exportExcel, exportTablePDF } from '../lib/exports';
-import { saveAppSettings, uploadImageAsset } from '../lib/firestoreApi';
+import {
+  fetchFirebaseProviderStatus,
+  type FirebaseProviderStatus,
+} from '../lib/apiClient';
+import {
+  provisionAdminMobileCredentials,
+  saveAppSettings,
+  uploadImageAsset,
+} from '../lib/firestoreApi';
 import { TRANSLATIONS } from '../lib/i18n';
 import type {
   ActivityLog,
@@ -90,6 +103,35 @@ export const ReportsSettingsView: React.FC<ReportsSettingsViewProps> = ({
   );
   const [smsSenderId, setSmsSenderId] = useState(settings?.smsSenderId || 'SAGARM');
   const [savingSettings, setSavingSettings] = useState(false);
+
+  // Admin Mobile Credentials Update State
+  const [adminCredPhone, setAdminCredPhone] = useState('');
+  const [adminCurrentPassword, setAdminCurrentPassword] = useState('');
+  const [adminNewPassword, setAdminNewPassword] = useState('');
+  const [adminConfirmPassword, setAdminConfirmPassword] = useState('');
+  const [showAdminPasswords, setShowAdminPasswords] = useState(false);
+  const [savingAdminCreds, setSavingAdminCreds] = useState(false);
+
+  const [providerInfo, setProviderInfo] = useState<FirebaseProviderStatus | null>(null);
+  const [checkingProvider, setCheckingProvider] = useState(false);
+
+  const fetchProviderStatus = async () => {
+    setCheckingProvider(true);
+    try {
+      const data = await fetchFirebaseProviderStatus();
+      setProviderInfo(data);
+    } catch {
+      // Ignore network hiccup
+    } finally {
+      setCheckingProvider(false);
+    }
+  };
+
+  useEffect(() => {
+    if (subTab === 'settings') {
+      fetchProviderStatus();
+    }
+  }, [subTab]);
 
   const memberMap = useMemo(() => new Map(members.map((m) => [m.memberId, m])), [members]);
 
@@ -264,6 +306,50 @@ export const ReportsSettingsView: React.FC<ReportsSettingsViewProps> = ({
       onToast(err instanceof Error ? err.message : 'Failed to save settings', 'error');
     } finally {
       setSavingSettings(false);
+    }
+  };
+
+  const handleSaveAdminCredentials = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const digits = adminCredPhone.replace(/\D/g, '');
+    if (digits.length < 10) {
+      onToast('Enter a valid 10-digit Admin mobile number.', 'error');
+      return;
+    }
+    const strong =
+      adminNewPassword.length >= 8 &&
+      /[A-Z]/.test(adminNewPassword) &&
+      /[a-z]/.test(adminNewPassword) &&
+      /[0-9]/.test(adminNewPassword) &&
+      /[^A-Za-z0-9]/.test(adminNewPassword);
+    if (!strong) {
+      onToast(
+        'Password must be at least 8 characters and include uppercase, lowercase, number, and symbol.',
+        'error'
+      );
+      return;
+    }
+    if (adminNewPassword !== adminConfirmPassword) {
+      onToast('New password and confirmation do not match.', 'error');
+      return;
+    }
+    setSavingAdminCreds(true);
+    try {
+      const res = await provisionAdminMobileCredentials({
+        phone: adminCredPhone,
+        password: adminNewPassword,
+        currentPassword: adminCurrentPassword || undefined,
+        displayName: companyName,
+        allowUpdate: true,
+      });
+      setAdminCurrentPassword('');
+      setAdminNewPassword('');
+      setAdminConfirmPassword('');
+      onToast(`Admin mobile login (${res.phoneNormalized}) updated securely.`);
+    } catch (err) {
+      onToast(err instanceof Error ? err.message : 'Failed to update Admin login.', 'error');
+    } finally {
+      setSavingAdminCreds(false);
     }
   };
 
@@ -605,6 +691,97 @@ export const ReportsSettingsView: React.FC<ReportsSettingsViewProps> = ({
           </form>
 
           <div className="space-y-4 lg:col-span-4">
+            <form
+              onSubmit={handleSaveAdminCredentials}
+              className="space-y-3 rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="h-4 w-4 text-emerald-600" />
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                    Admin Mobile Login &amp; Password
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowAdminPasswords((v) => !v)}
+                  className="text-xs font-semibold text-slate-500 hover:text-slate-800 dark:text-slate-400"
+                  aria-label="Toggle password visibility"
+                >
+                  {showAdminPasswords ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Configure or rotate your Admin mobile number and password stored via Firebase Auth &amp; salted hashing.
+              </p>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Admin Mobile Number
+                </label>
+                <input
+                  type="tel"
+                  required
+                  value={adminCredPhone}
+                  onChange={(e) => setAdminCredPhone(e.target.value)}
+                  placeholder="10-digit Admin mobile number"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Current Password (if changing existing)
+                </label>
+                <input
+                  type={showAdminPasswords ? 'text' : 'password'}
+                  autoComplete="current-password"
+                  value={adminCurrentPassword}
+                  onChange={(e) => setAdminCurrentPassword(e.target.value)}
+                  placeholder="Leave blank on initial setup"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  New Admin Password
+                </label>
+                <input
+                  type={showAdminPasswords ? 'text' : 'password'}
+                  required
+                  autoComplete="new-password"
+                  value={adminNewPassword}
+                  onChange={(e) => setAdminNewPassword(e.target.value)}
+                  placeholder="Min 8 chars, upper, lower, digit, symbol"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Confirm New Password
+                </label>
+                <input
+                  type={showAdminPasswords ? 'text' : 'password'}
+                  required
+                  autoComplete="new-password"
+                  value={adminConfirmPassword}
+                  onChange={(e) => setAdminConfirmPassword(e.target.value)}
+                  placeholder="Re-enter new password"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={savingAdminCreds}
+                className="w-full rounded-lg bg-[#0B1F3A] px-4 py-2.5 text-xs font-semibold text-white hover:bg-[#132E54] disabled:opacity-50"
+              >
+                {savingAdminCreds ? 'Updating...' : 'Save Admin Mobile Login'}
+              </button>
+            </form>
+
             <div className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
               <h3 className="text-sm font-bold text-slate-900 dark:text-white">Database Backup</h3>
               <p className="mt-1.5 text-xs text-slate-500">
@@ -621,12 +798,59 @@ export const ReportsSettingsView: React.FC<ReportsSettingsViewProps> = ({
             </div>
 
             <div className="rounded-xl border border-slate-200 bg-white p-5 text-xs dark:border-slate-800 dark:bg-slate-900">
-              <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                Firebase Authentication Checklist
-              </h3>
-              <p className="mt-2 leading-relaxed text-slate-600 dark:text-slate-300">
-                Google Admin Sign-In is active. For direct Member Email/Password sign-in without a service account key, ensure <strong>Email/Password</strong> is enabled under Firebase Console → Authentication → Sign-in method, and deploy <code>functions/src/index.ts</code> for Cloud Function provisioning.
-              </p>
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                  Firebase Authentication Status
+                </h3>
+                <button
+                  type="button"
+                  onClick={fetchProviderStatus}
+                  disabled={checkingProvider}
+                  className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300"
+                >
+                  <RefreshCw className={`h-3 w-3 ${checkingProvider ? 'animate-spin' : ''}`} />
+                  <span>Check</span>
+                </button>
+              </div>
+              {providerInfo ? (
+                <div className="mt-2 space-y-1.5 leading-relaxed text-slate-600 dark:text-slate-300">
+                  <p>
+                    Project:{' '}
+                    <code className="font-mono font-bold text-[#0B1F3A] dark:text-white">
+                      {providerInfo.projectId}
+                    </code>
+                    {providerInfo.projectNumber ? ` (#${providerInfo.projectNumber})` : ''}
+                  </p>
+                  <p>
+                    Email/Password:{' '}
+                    <span
+                      className={`font-semibold ${
+                        providerInfo.emailPasswordEnabled ? 'text-emerald-600' : 'text-amber-600'
+                      }`}
+                    >
+                      {providerInfo.emailPasswordEnabled
+                        ? 'Enabled'
+                        : `Disabled (${providerInfo.statusCode})`}
+                    </span>
+                  </p>
+                  <p className="text-[11px] text-slate-500">{providerInfo.detailMessage}</p>
+                  {providerInfo.providersConsoleUrl && (
+                    <a
+                      href={providerInfo.providersConsoleUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 font-semibold text-emerald-700 hover:underline dark:text-emerald-400"
+                    >
+                      <span>Open Firebase Auth Providers</span>
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                  )}
+                </div>
+              ) : (
+                <p className="mt-2 leading-relaxed text-slate-600 dark:text-slate-300">
+                  Checking Firebase Authentication configuration...
+                </p>
+              )}
             </div>
           </div>
         </div>

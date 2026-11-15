@@ -7,10 +7,28 @@
       "properties": {
         "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
         "email": { "type": "string", "format": "email", "maxLength": 200 },
+        "phone": { "type": "string", "maxLength": 20 },
         "role": { "type": "string", "enum": ["admin"], "maxLength": 20 },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["uid", "email", "role", "createdAt"]
+    },
+    "AdminCredential": {
+      "title": "AdminCredential",
+      "description": "Salted password hash metadata for authorized Admin mobile login.",
+      "type": "object",
+      "properties": {
+        "phoneNormalized": { "type": "string", "minLength": 6, "maxLength": 20, "pattern": "^[0-9]+$" },
+        "adminUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "authEmail": { "type": "string", "maxLength": 160 },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "passwordHash": { "type": "string", "minLength": 32, "maxLength": 256 },
+        "passwordSalt": { "type": "string", "minLength": 16, "maxLength": 128 },
+        "updatedBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["phoneNormalized", "adminUid", "authEmail", "passwordHash", "passwordSalt", "updatedBy", "createdAt", "updatedAt"]
     },
     "UserAccount": {
       "title": "UserAccount",
@@ -358,6 +376,10 @@
     "/admins/{uid}": {
       "schema": { "$ref": "#/entities/AdminUser" },
       "description": "Authorized admin UIDs."
+    },
+    "/adminCredentials/{phoneNormalized}": {
+      "schema": { "$ref": "#/entities/AdminCredential" },
+      "description": "Salted password hashes for authorized Admin mobile login."
     },
     "/users/{uid}": {
       "schema": { "$ref": "#/entities/UserAccount" },

@@ -4,6 +4,7 @@ import {
   computeMemberFinancialSummary,
   formatCurrency,
 } from '../lib/accounting';
+import { apiUrl, hasConfiguredApiBase, isNativePlatform } from '../lib/apiClient';
 import { auth } from '../lib/firebase';
 import { createNotificationRecord } from '../lib/firestoreApi';
 import {
@@ -102,10 +103,14 @@ export const AccountingMessagesView: React.FC<AccountingMessagesViewProps> = ({
 
   const handleSendSmsGateway = async () => {
     if (!selectedSummary || !auth.currentUser) return;
+    if (isNativePlatform() && !hasConfiguredApiBase()) {
+      onToast('Use the Device SMS or WhatsApp launcher in the Android APK.', 'error');
+      return;
+    }
     setSendingSms(true);
     try {
       const idToken = await auth.currentUser.getIdToken();
-      const resp = await fetch('/api/notifications/sms', {
+      const resp = await fetch(apiUrl('/api/notifications/sms'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

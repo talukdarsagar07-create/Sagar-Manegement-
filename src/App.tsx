@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   onAuthStateChanged,
   signInWithCustomToken,
@@ -52,7 +52,18 @@ import {
   handleFirestoreError,
   OperationType,
 } from './lib/firebase';
-import { ensureAdminBootstrap } from './lib/firestoreApi';
+import {
+  adminPhoneToAuthEmail,
+  apiUrl,
+  hasConfiguredApiBase,
+  isNativePlatform,
+  memberPhoneToAuthEmail,
+  normalizePhoneDigits,
+} from './lib/apiClient';
+import {
+  ensureAdminBootstrap,
+  provisionAdminMobileCredentials,
+} from './lib/firestoreApi';
 import { TRANSLATIONS } from './lib/i18n';
 import type {
   ActivityLog,
@@ -99,6 +110,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
+  const setupInProgressRef = useRef(false);
 
   // Domain Collections
   const [members, setMembers] = useState<Member[]>([]);
@@ -130,6 +142,7 @@ export default function App() {
   // Listen to Firebase Auth state
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
+      if (setupInProgressRef.current) return;
       setFirebaseUser(user);
       if (!user) {
         if (memberSessionToken) {
@@ -283,7 +296,7 @@ export default function App() {
     }
 
     if (memberSessionToken) {
-      fetch('/api/member-portal/me', {
+      fetch(apiUrl('/api/member-portal/me'), {
         headers: { Authorization: `Bearer ${memberSessionToken}` },
       })
         .then(async (resp) => {
@@ -322,22 +335,10 @@ export default function App() {
     try {
       await signInWithPopup(auth, googleProvider);
     } catch (err) {
-      setAuthError(err instanceof Error ? err.message : 'Google Sign-In failed.');
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
-  const handleAdminEmailLogin = async (email: string, password: string) => {
-    setAuthError(null);
-    setAuthLoading(true);
-    try {
-      await signInWithEmailAndPassword(auth, email.trim(), password);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes('operation-not-allowed')) {
+      const msg = err instanceof Error ? err.message : 'Google Sign-In failed.';
+      if (isNativePlatform()) {
         setAuthError(
-          'Email/Password provider is not enabled in Firebase Console yet. Use "Sign in with Google" or enable Email/Password under Firebase Console → Authentication → Sign-in method.'
+          `Google Sign-In popup is restricted inside the Android WebView (${msg}). Use Admin Mobile Number + Password to sign in.`
         );
       } else {
         setAuthError(msg);
@@ -347,11 +348,141 @@ export default function App() {
     }
   };
 
+  const handleAdminPhoneLogin = async (phone: string, password: string) => {
+    setAuthError(null);
+    setAuthLoading(true);
+    try {
+      const phoneNorm = normalizePhoneDigits(phone);
+      if (phoneNorm.length < 10 || !password) {
+        setAuthError('Valid 10-digit Admin mobile number and password are required.');
+        return;
+      }
+
+      if (isNativePlatform() && !hasConfiguredApiBase()) {
+        await signInWithEmailAndPassword(auth, adminPhoneToAuthEmail(phoneNorm), password);
+        return;
+      }
+
+      const resp = await fetch(apiUrl('/api/auth/admin-login'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone, password }),
+      });
+      const data = (await resp.json()) as {
+        ok?: boolean;
+        error?: string;
+        mode?: 'custom_token' | 'email_password';
+        customToken?: string;
+        authEmail?: string;
+      };
+      if (!resp.ok || !data.ok) {
+        setAuthError(data.error || 'Invalid Admin mobile number or password.');
+        return;
+      }
+
+      if (data.mode === 'custom_token' && data.customToken) {
+        await signInWithCustomToken(auth, data.customToken);
+      } else if (data.mode === 'email_password' && data.authEmail) {
+        await signInWithEmailAndPassword(auth, data.authEmail, password);
+      } else {
+        setAuthError('Unsupported Admin authentication response.');
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('operation-not-allowed')) {
+        setAuthError(
+          'Email/Password provider is not enabled in Firebase Console yet. Enable Authentication → Sign-in method → Email/Password in Firebase Console.'
+        );
+      } else {
+        setAuthError(msg || 'Admin login failed.');
+      }
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleFirstAdminSetup = async (input: {
+    phone: string;
+    password: string;
+    displayName?: string;
+  }) => {
+    setAuthError(null);
+    setAuthLoading(true);
+    setupInProgressRef.current = true;
+    try {
+      let currentUser = auth.currentUser;
+      if (
+        !currentUser ||
+        !currentUser.emailVerified ||
+        currentUser.email !== BOOTSTRAPPED_ADMIN_EMAIL
+      ) {
+        const cred = await signInWithPopup(auth, googleProvider);
+        currentUser = cred.user;
+      }
+
+      if (
+        !currentUser.emailVerified ||
+        currentUser.email !== BOOTSTRAPPED_ADMIN_EMAIL
+      ) {
+        await signOut(auth).catch(() => {});
+        setAuthError(
+          `Only the authorized owner account (${BOOTSTRAPPED_ADMIN_EMAIL}) can perform First-Time Admin Setup.`
+        );
+        return;
+      }
+
+      await ensureAdminBootstrap();
+      const provisioned = await provisionAdminMobileCredentials({
+        phone: input.phone,
+        password: input.password,
+        displayName: input.displayName,
+        allowUpdate: false,
+      });
+
+      const signedIn = await signInWithEmailAndPassword(
+        auth,
+        provisioned.authEmail,
+        input.password
+      );
+      const adminSnap = await getDoc(doc(db, 'admins', signedIn.user.uid));
+      if (!adminSnap.exists()) {
+        await signOut(auth).catch(() => {});
+        setAuthError('Admin authorization record could not be verified.');
+        return;
+      }
+
+      setFirebaseUser(signedIn.user);
+      setRole('admin');
+      setAuthReady(true);
+      showToast(
+        `Admin mobile login (${provisioned.phoneNormalized}) created successfully.`
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setAuthError(msg || 'First-Time Admin Setup failed.');
+    } finally {
+      setupInProgressRef.current = false;
+      setAuthLoading(false);
+    }
+  };
+
   const handleMemberLogin = async (phone: string, password: string) => {
     setAuthError(null);
     setAuthLoading(true);
     try {
-      const resp = await fetch('/api/auth/member-login', {
+      const phoneNorm = normalizePhoneDigits(phone);
+      if (phoneNorm.length < 6 || !password) {
+        setAuthError('Mobile number and password are required.');
+        return;
+      }
+
+      if (isNativePlatform() && !hasConfiguredApiBase()) {
+        await signInWithEmailAndPassword(auth, memberPhoneToAuthEmail(phoneNorm), password);
+        setRole('member');
+        return;
+      }
+
+      const resp = await fetch(apiUrl('/api/auth/member-login'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone, password }),
@@ -422,7 +553,8 @@ export default function App() {
           onToggleLang={() => setLang((l) => (l === 'en' ? 'bn' : 'en'))}
           onToggleDark={() => setDark((d) => !d)}
           onAdminGoogleLogin={handleAdminGoogleLogin}
-          onAdminEmailLogin={handleAdminEmailLogin}
+          onAdminPhoneLogin={handleAdminPhoneLogin}
+          onFirstAdminSetup={handleFirstAdminSetup}
           onMemberLogin={handleMemberLogin}
           authError={authError}
           authLoading={authLoading}

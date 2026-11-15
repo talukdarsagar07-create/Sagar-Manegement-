@@ -25,4 +25,6 @@ export const DIRTY_DOZEN_TESTS: SecurityTestCase[] = [
   { id: 'DD-10', description: 'Forged client createdAt timestamp', actor: 'admin', operation: 'create', path: 'payments/pay_backdate', expected: 'PERMISSION_DENIED' },
   { id: 'DD-11', description: 'Member A reading memberCredentials', actor: 'memberA', operation: 'get', path: 'memberCredentials/9876543210', expected: 'PERMISSION_DENIED' },
   { id: 'DD-12', description: 'Admin deleting immutable activityLog', actor: 'admin', operation: 'delete', path: 'activityLogs/log_1', expected: 'PERMISSION_DENIED' },
+  { id: 'DD-13', description: 'Member A reading adminCredentials', actor: 'memberA', operation: 'get', path: 'adminCredentials/7001207379', expected: 'PERMISSION_DENIED' },
+  { id: 'DD-14', description: 'Member A creating adminCredentials', actor: 'memberA', operation: 'create', path: 'adminCredentials/7001207379', expected: 'PERMISSION_DENIED' },
 ];
