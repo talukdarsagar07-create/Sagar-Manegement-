@@ -1,0 +1,411 @@
+{
+  "entities": {
+    "AdminUser": {
+      "title": "AdminUser",
+      "description": "Authorized system administrator registry document.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "format": "email", "maxLength": 200 },
+        "role": { "type": "string", "enum": ["admin"], "maxLength": 20 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role", "createdAt"]
+    },
+    "UserAccount": {
+      "title": "UserAccount",
+      "description": "User role and identity mapping for admins and workers.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "role": { "type": "string", "enum": ["admin", "member"], "maxLength": 20 },
+        "memberId": { "type": "string", "maxLength": 128 },
+        "phone": { "type": "string", "maxLength": 20 },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "status": { "type": "string", "enum": ["active", "inactive"], "maxLength": 20 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "role", "displayName", "status", "createdAt", "updatedAt"]
+    },
+    "Member": {
+      "title": "Member",
+      "description": "Worker profile with salary rate, overtime rate, QR data, and status.",
+      "type": "object",
+      "properties": {
+        "memberId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "memberCode": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "memberUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "fullName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "phone": { "type": "string", "minLength": 6, "maxLength": 20 },
+        "joiningDate": { "type": "string", "maxLength": 20, "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "dailySalaryRate": { "type": "number" },
+        "otRate": { "type": "number" },
+        "previousBalance": { "type": "number" },
+        "photoUrl": { "type": "string", "maxLength": 300000 },
+        "qrData": { "type": "string", "maxLength": 1000 },
+        "upiId": { "type": "string", "maxLength": 120 },
+        "status": { "type": "string", "enum": ["active", "inactive"], "maxLength": 20 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "memberId",
+        "memberCode",
+        "memberUid",
+        "fullName",
+        "phone",
+        "joiningDate",
+        "dailySalaryRate",
+        "otRate",
+        "previousBalance",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "MemberCredential": {
+      "title": "MemberCredential",
+      "description": "Admin-managed salted password hash metadata for member phone login.",
+      "type": "object",
+      "properties": {
+        "phoneNormalized": { "type": "string", "minLength": 6, "maxLength": 20, "pattern": "^[0-9]+$" },
+        "memberId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "memberUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "authEmail": { "type": "string", "maxLength": 160 },
+        "passwordHash": { "type": "string", "minLength": 32, "maxLength": 256 },
+        "passwordSalt": { "type": "string", "minLength": 16, "maxLength": 128 },
+        "updatedBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["phoneNormalized", "memberId", "memberUid", "authEmail", "passwordHash", "passwordSalt", "updatedBy", "updatedAt"]
+    },
+    "AttendanceRecord": {
+      "title": "AttendanceRecord",
+      "description": "Daily P/A attendance record and working/OT hours for a member.",
+      "type": "object",
+      "properties": {
+        "recordId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "memberId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "memberUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "date": { "type": "string", "maxLength": 20, "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "status": { "type": "string", "enum": ["P", "A"], "maxLength": 4 },
+        "workingHours": { "type": "number" },
+        "otHours": { "type": "number" },
+        "notes": { "type": "string", "maxLength": 300 },
+        "updatedBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["recordId", "memberId", "memberUid", "date", "status", "workingHours", "otHours", "updatedBy", "createdAt", "updatedAt"]
+    },
+    "OvertimeRecord": {
+      "title": "OvertimeRecord",
+      "description": "Overtime entry with hours, rate, and calculated overtime pay.",
+      "type": "object",
+      "properties": {
+        "recordId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "memberId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "memberUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "date": { "type": "string", "maxLength": 20, "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "hours": { "type": "number" },
+        "rate": { "type": "number" },
+        "amount": { "type": "number" },
+        "notes": { "type": "string", "maxLength": 300 },
+        "createdBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["recordId", "memberId", "memberUid", "date", "hours", "rate", "amount", "createdBy", "createdAt", "updatedAt"]
+    },
+    "SalaryRecord": {
+      "title": "SalaryRecord",
+      "description": "Saved salary calculation snapshot for weekly, monthly, or custom periods.",
+      "type": "object",
+      "properties": {
+        "recordId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "memberId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "memberUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "periodType": { "type": "string", "enum": ["weekly", "monthly", "custom"], "maxLength": 20 },
+        "startDate": { "type": "string", "maxLength": 20, "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "endDate": { "type": "string", "maxLength": 20, "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "presentDays": { "type": "number" },
+        "absentDays": { "type": "number" },
+        "workingHours": { "type": "number" },
+        "otHours": { "type": "number" },
+        "dailyRate": { "type": "number" },
+        "otRate": { "type": "number" },
+        "baseSalary": { "type": "number" },
+        "otSalary": { "type": "number" },
+        "grossSalary": { "type": "number" },
+        "normalAdvance": { "type": "number" },
+        "cookingAdvance": { "type": "number" },
+        "previousPayments": { "type": "number" },
+        "netBalance": { "type": "number" },
+        "balanceDirection": { "type": "string", "enum": ["YOU OWE MEMBER", "MEMBER OWES YOU", "ALL SETTLED"], "maxLength": 30 },
+        "createdBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "recordId",
+        "memberId",
+        "memberUid",
+        "periodType",
+        "startDate",
+        "endDate",
+        "presentDays",
+        "absentDays",
+        "workingHours",
+        "otHours",
+        "dailyRate",
+        "otRate",
+        "baseSalary",
+        "otSalary",
+        "grossSalary",
+        "normalAdvance",
+        "cookingAdvance",
+        "previousPayments",
+        "netBalance",
+        "balanceDirection",
+        "createdBy",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AdvanceTransaction": {
+      "title": "AdvanceTransaction",
+      "description": "Normal or Cooking advance given or repaid transaction.",
+      "type": "object",
+      "properties": {
+        "advanceId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "memberId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "memberUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "category": { "type": "string", "enum": ["NORMAL", "COOKING"], "maxLength": 20 },
+        "transactionType": { "type": "string", "enum": ["GIVEN", "REPAYMENT"], "maxLength": 20 },
+        "amount": { "type": "number" },
+        "date": { "type": "string", "maxLength": 20, "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "notes": { "type": "string", "maxLength": 400 },
+        "paymentMethod": { "type": "string", "enum": ["PhonePe", "Google Pay", "Paytm", "UPI", "Cash", "Bank"], "maxLength": 30 },
+        "reference": { "type": "string", "maxLength": 120 },
+        "createdBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "advanceId",
+        "memberId",
+        "memberUid",
+        "category",
+        "transactionType",
+        "amount",
+        "date",
+        "paymentMethod",
+        "createdBy",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "PaymentTransaction": {
+      "title": "PaymentTransaction",
+      "description": "Verified salary or balance payment transaction via UPI or cash.",
+      "type": "object",
+      "properties": {
+        "paymentId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "memberId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "memberUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "direction": { "type": "string", "enum": ["TO_MEMBER", "FROM_MEMBER"], "maxLength": 20 },
+        "amount": { "type": "number" },
+        "date": { "type": "string", "maxLength": 20, "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "method": { "type": "string", "enum": ["PhonePe", "Google Pay", "Paytm", "UPI", "Cash", "Bank"], "maxLength": 30 },
+        "reference": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "verified": { "type": "boolean" },
+        "notes": { "type": "string", "maxLength": 400 },
+        "createdBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "paymentId",
+        "memberId",
+        "memberUid",
+        "direction",
+        "amount",
+        "date",
+        "method",
+        "reference",
+        "verified",
+        "createdBy",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "SalarySlip": {
+      "title": "SalarySlip",
+      "description": "Archived individual salary slip generated for PDF export and member portal.",
+      "type": "object",
+      "properties": {
+        "slipId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "memberId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "memberUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "memberCode": { "type": "string", "maxLength": 32 },
+        "memberName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "memberPhone": { "type": "string", "maxLength": 20 },
+        "periodLabel": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "startDate": { "type": "string", "maxLength": 20, "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "endDate": { "type": "string", "maxLength": 20, "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "presentDays": { "type": "number" },
+        "absentDays": { "type": "number" },
+        "workingHours": { "type": "number" },
+        "otHours": { "type": "number" },
+        "dailyRate": { "type": "number" },
+        "otRate": { "type": "number" },
+        "baseSalary": { "type": "number" },
+        "otSalary": { "type": "number" },
+        "grossSalary": { "type": "number" },
+        "normalAdvance": { "type": "number" },
+        "cookingAdvance": { "type": "number" },
+        "previousPayments": { "type": "number" },
+        "finalBalance": { "type": "number" },
+        "balanceDirection": { "type": "string", "enum": ["YOU OWE MEMBER", "MEMBER OWES YOU", "ALL SETTLED"], "maxLength": 30 },
+        "createdBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "slipId",
+        "memberId",
+        "memberUid",
+        "memberCode",
+        "memberName",
+        "memberPhone",
+        "periodLabel",
+        "startDate",
+        "endDate",
+        "presentDays",
+        "absentDays",
+        "workingHours",
+        "otHours",
+        "dailyRate",
+        "otRate",
+        "baseSalary",
+        "otSalary",
+        "grossSalary",
+        "normalAdvance",
+        "cookingAdvance",
+        "previousPayments",
+        "finalBalance",
+        "balanceDirection",
+        "createdBy",
+        "createdAt"
+      ]
+    },
+    "AppSettings": {
+      "title": "AppSettings",
+      "description": "Application configuration, Admin UPI ID, QR code, and SMS webhook settings.",
+      "type": "object",
+      "properties": {
+        "settingId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "companyName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "tagline": { "type": "string", "maxLength": 160 },
+        "upiId": { "type": "string", "maxLength": 120 },
+        "upiName": { "type": "string", "maxLength": 120 },
+        "adminQrImage": { "type": "string", "maxLength": 300000 },
+        "smsProviderEndpoint": { "type": "string", "maxLength": 300 },
+        "smsSenderId": { "type": "string", "maxLength": 40 },
+        "defaultOtRate": { "type": "number" },
+        "standardWorkHours": { "type": "number" },
+        "updatedBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["settingId", "companyName", "standardWorkHours", "defaultOtRate", "updatedBy", "updatedAt"]
+    },
+    "NotificationItem": {
+      "title": "NotificationItem",
+      "description": "In-app or message dispatch notification record for a member or admin.",
+      "type": "object",
+      "properties": {
+        "notificationId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "memberId": { "type": "string", "maxLength": 128 },
+        "memberUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 140 },
+        "message": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "type": { "type": "string", "enum": ["attendance", "salary", "advance", "payment", "system"], "maxLength": 30 },
+        "channel": { "type": "string", "enum": ["in_app", "whatsapp", "sms"], "maxLength": 20 },
+        "read": { "type": "boolean" },
+        "createdBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["notificationId", "memberUid", "title", "message", "type", "channel", "read", "createdBy", "createdAt"]
+    },
+    "ActivityLog": {
+      "title": "ActivityLog",
+      "description": "Immutable administrative audit trail entry.",
+      "type": "object",
+      "properties": {
+        "logId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "actorUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "actorName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "action": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "entityType": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "entityId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "details": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["logId", "actorUid", "actorName", "action", "entityType", "entityId", "details", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/admins/{uid}": {
+      "schema": { "$ref": "#/entities/AdminUser" },
+      "description": "Authorized admin UIDs."
+    },
+    "/users/{uid}": {
+      "schema": { "$ref": "#/entities/UserAccount" },
+      "description": "User role and profile registry."
+    },
+    "/members/{memberId}": {
+      "schema": { "$ref": "#/entities/Member" },
+      "description": "Worker profiles managed by Admin."
+    },
+    "/memberCredentials/{phoneNormalized}": {
+      "schema": { "$ref": "#/entities/MemberCredential" },
+      "description": "Salted password hashes for member phone login."
+    },
+    "/attendance/{recordId}": {
+      "schema": { "$ref": "#/entities/AttendanceRecord" },
+      "description": "Daily P/A attendance records."
+    },
+    "/overtimeRecords/{recordId}": {
+      "schema": { "$ref": "#/entities/OvertimeRecord" },
+      "description": "Worker overtime records."
+    },
+    "/salaryRecords/{recordId}": {
+      "schema": { "$ref": "#/entities/SalaryRecord" },
+      "description": "Calculated period salary records."
+    },
+    "/advances/{advanceId}": {
+      "schema": { "$ref": "#/entities/AdvanceTransaction" },
+      "description": "Normal and Cooking advance ledger."
+    },
+    "/payments/{paymentId}": {
+      "schema": { "$ref": "#/entities/PaymentTransaction" },
+      "description": "UPI and cash payment transactions."
+    },
+    "/salarySlips/{slipId}": {
+      "schema": { "$ref": "#/entities/SalarySlip" },
+      "description": "Archived individual salary slips."
+    },
+    "/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/AppSettings" },
+      "description": "Global application, UPI QR, and SMS settings."
+    },
+    "/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/NotificationItem" },
+      "description": "Member and admin notifications."
+    },
+    "/activityLogs/{logId}": {
+      "schema": { "$ref": "#/entities/ActivityLog" },
+      "description": "Audit logs of admin actions."
+    }
+  }
+}

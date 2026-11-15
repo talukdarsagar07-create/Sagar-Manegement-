@@ -1,0 +1,6 @@
+{
+  "name": "SAGAR MANAGEMENT",
+  "description": "SMART ATTENDANCE • SALARY • WORKER MANAGEMENT — Complete worker attendance, overtime, advance, UPI payment, and PDF salary slip PWA.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

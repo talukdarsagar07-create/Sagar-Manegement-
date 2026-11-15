@@ -1,0 +1,546 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Global Hardened Primitives ---
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && (request.auth.token.email_verified == true || request.auth.token.firebase.sign_in_provider == 'custom');
+    }
+
+    function isBootstrappedAdmin() {
+      return isSignedIn() &&
+        request.auth.token.email_verified == true &&
+        request.auth.token.email == 'talukdarsagar07@gmail.com';
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin() ||
+        (isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
+    }
+
+    function isValidDateStr(d) {
+      return d is string && d.size() == 10 && d.matches('^\\d{4}-\\d{2}-\\d{2}$');
+    }
+
+    // --- Validation Blueprints ---
+    function isValidAdminUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'role', 'createdAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'role', 'createdAt']) &&
+        isValidId(data.uid) &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 200 &&
+        data.role == 'admin' &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidUserAccount(data) {
+      return data.keys().hasAll(['uid', 'role', 'displayName', 'status', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'role', 'memberId', 'phone', 'displayName', 'status', 'createdAt', 'updatedAt']) &&
+        isValidId(data.uid) &&
+        data.role in ['admin', 'member'] &&
+        (!('memberId' in data) || isValidId(data.memberId)) &&
+        (!('phone' in data) || (data.phone is string && data.phone.size() <= 20)) &&
+        data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120 &&
+        data.status in ['active', 'inactive'] &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidMember(data) {
+      return data.keys().hasAll([
+          'memberId', 'memberCode', 'memberUid', 'fullName', 'phone',
+          'joiningDate', 'dailySalaryRate', 'otRate', 'previousBalance',
+          'status', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'memberId', 'memberCode', 'memberUid', 'fullName', 'phone',
+          'joiningDate', 'dailySalaryRate', 'otRate', 'previousBalance',
+          'photoUrl', 'qrData', 'upiId', 'status', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.memberId) &&
+        data.memberCode is string && data.memberCode.size() >= 1 && data.memberCode.size() <= 32 &&
+        isValidId(data.memberUid) &&
+        data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 120 &&
+        data.phone is string && data.phone.size() >= 6 && data.phone.size() <= 20 &&
+        isValidDateStr(data.joiningDate) &&
+        data.dailySalaryRate is number && data.dailySalaryRate >= 0 &&
+        data.otRate is number && data.otRate >= 0 &&
+        data.previousBalance is number &&
+        (!('photoUrl' in data) || (data.photoUrl is string && data.photoUrl.size() <= 300000)) &&
+        (!('qrData' in data) || (data.qrData is string && data.qrData.size() <= 1000)) &&
+        (!('upiId' in data) || (data.upiId is string && data.upiId.size() <= 120)) &&
+        data.status in ['active', 'inactive'] &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidMemberCredential(data) {
+      return data.keys().hasAll(['phoneNormalized', 'memberId', 'memberUid', 'authEmail', 'passwordHash', 'passwordSalt', 'updatedBy', 'updatedAt']) &&
+        data.keys().hasOnly(['phoneNormalized', 'memberId', 'memberUid', 'authEmail', 'passwordHash', 'passwordSalt', 'updatedBy', 'updatedAt']) &&
+        data.phoneNormalized is string && data.phoneNormalized.size() >= 6 && data.phoneNormalized.size() <= 20 && data.phoneNormalized.matches('^[0-9]+$') &&
+        isValidId(data.memberId) &&
+        isValidId(data.memberUid) &&
+        data.authEmail is string && data.authEmail.size() >= 5 && data.authEmail.size() <= 160 &&
+        data.passwordHash is string && data.passwordHash.size() >= 32 && data.passwordHash.size() <= 256 &&
+        data.passwordSalt is string && data.passwordSalt.size() >= 16 && data.passwordSalt.size() <= 128 &&
+        isValidId(data.updatedBy) &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidAttendance(data) {
+      return data.keys().hasAll(['recordId', 'memberId', 'memberUid', 'date', 'status', 'workingHours', 'otHours', 'updatedBy', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['recordId', 'memberId', 'memberUid', 'date', 'status', 'workingHours', 'otHours', 'notes', 'updatedBy', 'createdAt', 'updatedAt']) &&
+        isValidId(data.recordId) &&
+        isValidId(data.memberId) &&
+        isValidId(data.memberUid) &&
+        isValidDateStr(data.date) &&
+        data.status in ['P', 'A'] &&
+        data.workingHours is number && data.workingHours >= 0 && data.workingHours <= 24 &&
+        data.otHours is number && data.otHours >= 0 && data.otHours <= 24 &&
+        (!('notes' in data) || (data.notes is string && data.notes.size() <= 300)) &&
+        isValidId(data.updatedBy) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidOvertime(data) {
+      return data.keys().hasAll(['recordId', 'memberId', 'memberUid', 'date', 'hours', 'rate', 'amount', 'createdBy', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['recordId', 'memberId', 'memberUid', 'date', 'hours', 'rate', 'amount', 'notes', 'createdBy', 'createdAt', 'updatedAt']) &&
+        isValidId(data.recordId) &&
+        isValidId(data.memberId) &&
+        isValidId(data.memberUid) &&
+        isValidDateStr(data.date) &&
+        data.hours is number && data.hours >= 0 && data.hours <= 24 &&
+        data.rate is number && data.rate >= 0 &&
+        data.amount is number && data.amount >= 0 &&
+        (!('notes' in data) || (data.notes is string && data.notes.size() <= 300)) &&
+        isValidId(data.createdBy) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidSalaryRecord(data) {
+      return data.keys().hasAll([
+          'recordId', 'memberId', 'memberUid', 'periodType', 'startDate', 'endDate',
+          'presentDays', 'absentDays', 'workingHours', 'otHours', 'dailyRate', 'otRate',
+          'baseSalary', 'otSalary', 'grossSalary', 'normalAdvance', 'cookingAdvance',
+          'previousPayments', 'netBalance', 'balanceDirection', 'createdBy', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'recordId', 'memberId', 'memberUid', 'periodType', 'startDate', 'endDate',
+          'presentDays', 'absentDays', 'workingHours', 'otHours', 'dailyRate', 'otRate',
+          'baseSalary', 'otSalary', 'grossSalary', 'normalAdvance', 'cookingAdvance',
+          'previousPayments', 'netBalance', 'balanceDirection', 'createdBy', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.recordId) &&
+        isValidId(data.memberId) &&
+        isValidId(data.memberUid) &&
+        data.periodType in ['weekly', 'monthly', 'custom'] &&
+        isValidDateStr(data.startDate) &&
+        isValidDateStr(data.endDate) &&
+        data.presentDays is number && data.presentDays >= 0 &&
+        data.absentDays is number && data.absentDays >= 0 &&
+        data.workingHours is number && data.workingHours >= 0 &&
+        data.otHours is number && data.otHours >= 0 &&
+        data.dailyRate is number && data.dailyRate >= 0 &&
+        data.otRate is number && data.otRate >= 0 &&
+        data.baseSalary is number && data.baseSalary >= 0 &&
+        data.otSalary is number && data.otSalary >= 0 &&
+        data.grossSalary is number && data.grossSalary >= 0 &&
+        data.normalAdvance is number &&
+        data.cookingAdvance is number &&
+        data.previousPayments is number &&
+        data.netBalance is number &&
+        data.balanceDirection in ['YOU OWE MEMBER', 'MEMBER OWES YOU', 'ALL SETTLED'] &&
+        isValidId(data.createdBy) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidAdvance(data) {
+      return data.keys().hasAll(['advanceId', 'memberId', 'memberUid', 'category', 'transactionType', 'amount', 'date', 'paymentMethod', 'createdBy', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['advanceId', 'memberId', 'memberUid', 'category', 'transactionType', 'amount', 'date', 'notes', 'paymentMethod', 'reference', 'createdBy', 'createdAt', 'updatedAt']) &&
+        isValidId(data.advanceId) &&
+        isValidId(data.memberId) &&
+        isValidId(data.memberUid) &&
+        data.category in ['NORMAL', 'COOKING'] &&
+        data.transactionType in ['GIVEN', 'REPAYMENT'] &&
+        data.amount is number && data.amount > 0 &&
+        isValidDateStr(data.date) &&
+        (!('notes' in data) || (data.notes is string && data.notes.size() <= 400)) &&
+        data.paymentMethod in ['PhonePe', 'Google Pay', 'Paytm', 'UPI', 'Cash', 'Bank'] &&
+        (!('reference' in data) || (data.reference is string && data.reference.size() <= 120)) &&
+        isValidId(data.createdBy) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidPayment(data) {
+      return data.keys().hasAll(['paymentId', 'memberId', 'memberUid', 'direction', 'amount', 'date', 'method', 'reference', 'verified', 'createdBy', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['paymentId', 'memberId', 'memberUid', 'direction', 'amount', 'date', 'method', 'reference', 'verified', 'notes', 'createdBy', 'createdAt', 'updatedAt']) &&
+        isValidId(data.paymentId) &&
+        isValidId(data.memberId) &&
+        isValidId(data.memberUid) &&
+        data.direction in ['TO_MEMBER', 'FROM_MEMBER'] &&
+        data.amount is number && data.amount > 0 &&
+        isValidDateStr(data.date) &&
+        data.method in ['PhonePe', 'Google Pay', 'Paytm', 'UPI', 'Cash', 'Bank'] &&
+        data.reference is string && data.reference.size() >= 1 && data.reference.size() <= 120 &&
+        data.verified is bool &&
+        (!('notes' in data) || (data.notes is string && data.notes.size() <= 400)) &&
+        isValidId(data.createdBy) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidSalarySlip(data) {
+      return data.keys().hasAll([
+          'slipId', 'memberId', 'memberUid', 'memberCode', 'memberName', 'memberPhone',
+          'periodLabel', 'startDate', 'endDate', 'presentDays', 'absentDays', 'workingHours',
+          'otHours', 'dailyRate', 'otRate', 'baseSalary', 'otSalary', 'grossSalary',
+          'normalAdvance', 'cookingAdvance', 'previousPayments', 'finalBalance',
+          'balanceDirection', 'createdBy', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'slipId', 'memberId', 'memberUid', 'memberCode', 'memberName', 'memberPhone',
+          'periodLabel', 'startDate', 'endDate', 'presentDays', 'absentDays', 'workingHours',
+          'otHours', 'dailyRate', 'otRate', 'baseSalary', 'otSalary', 'grossSalary',
+          'normalAdvance', 'cookingAdvance', 'previousPayments', 'finalBalance',
+          'balanceDirection', 'createdBy', 'createdAt'
+        ]) &&
+        isValidId(data.slipId) &&
+        isValidId(data.memberId) &&
+        isValidId(data.memberUid) &&
+        data.memberCode is string && data.memberCode.size() >= 1 && data.memberCode.size() <= 32 &&
+        data.memberName is string && data.memberName.size() >= 1 && data.memberName.size() <= 120 &&
+        data.memberPhone is string && data.memberPhone.size() <= 20 &&
+        data.periodLabel is string && data.periodLabel.size() >= 1 && data.periodLabel.size() <= 100 &&
+        isValidDateStr(data.startDate) &&
+        isValidDateStr(data.endDate) &&
+        data.presentDays is number && data.presentDays >= 0 &&
+        data.absentDays is number && data.absentDays >= 0 &&
+        data.workingHours is number && data.workingHours >= 0 &&
+        data.otHours is number && data.otHours >= 0 &&
+        data.dailyRate is number && data.dailyRate >= 0 &&
+        data.otRate is number && data.otRate >= 0 &&
+        data.baseSalary is number && data.baseSalary >= 0 &&
+        data.otSalary is number && data.otSalary >= 0 &&
+        data.grossSalary is number && data.grossSalary >= 0 &&
+        data.normalAdvance is number &&
+        data.cookingAdvance is number &&
+        data.previousPayments is number &&
+        data.finalBalance is number &&
+        data.balanceDirection in ['YOU OWE MEMBER', 'MEMBER OWES YOU', 'ALL SETTLED'] &&
+        isValidId(data.createdBy) &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidSettings(data) {
+      return data.keys().hasAll(['settingId', 'companyName', 'standardWorkHours', 'defaultOtRate', 'updatedBy', 'updatedAt']) &&
+        data.keys().hasOnly(['settingId', 'companyName', 'tagline', 'upiId', 'upiName', 'adminQrImage', 'smsProviderEndpoint', 'smsSenderId', 'defaultOtRate', 'standardWorkHours', 'updatedBy', 'updatedAt']) &&
+        isValidId(data.settingId) &&
+        data.companyName is string && data.companyName.size() >= 1 && data.companyName.size() <= 120 &&
+        (!('tagline' in data) || (data.tagline is string && data.tagline.size() <= 160)) &&
+        (!('upiId' in data) || (data.upiId is string && data.upiId.size() <= 120)) &&
+        (!('upiName' in data) || (data.upiName is string && data.upiName.size() <= 120)) &&
+        (!('adminQrImage' in data) || (data.adminQrImage is string && data.adminQrImage.size() <= 300000)) &&
+        (!('smsProviderEndpoint' in data) || (data.smsProviderEndpoint is string && data.smsProviderEndpoint.size() <= 300)) &&
+        (!('smsSenderId' in data) || (data.smsSenderId is string && data.smsSenderId.size() <= 40)) &&
+        data.defaultOtRate is number && data.defaultOtRate >= 0 &&
+        data.standardWorkHours is number && data.standardWorkHours >= 1 && data.standardWorkHours <= 24 &&
+        isValidId(data.updatedBy) &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidNotification(data) {
+      return data.keys().hasAll(['notificationId', 'memberUid', 'title', 'message', 'type', 'channel', 'read', 'createdBy', 'createdAt']) &&
+        data.keys().hasOnly(['notificationId', 'memberId', 'memberUid', 'title', 'message', 'type', 'channel', 'read', 'createdBy', 'createdAt']) &&
+        isValidId(data.notificationId) &&
+        (!('memberId' in data) || isValidId(data.memberId)) &&
+        isValidId(data.memberUid) &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 140 &&
+        data.message is string && data.message.size() >= 1 && data.message.size() <= 1000 &&
+        data.type in ['attendance', 'salary', 'advance', 'payment', 'system'] &&
+        data.channel in ['in_app', 'whatsapp', 'sms'] &&
+        data.read is bool &&
+        isValidId(data.createdBy) &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidActivityLog(data) {
+      return data.keys().hasAll(['logId', 'actorUid', 'actorName', 'action', 'entityType', 'entityId', 'details', 'createdAt']) &&
+        data.keys().hasOnly(['logId', 'actorUid', 'actorName', 'action', 'entityType', 'entityId', 'details', 'createdAt']) &&
+        isValidId(data.logId) &&
+        isValidId(data.actorUid) &&
+        data.actorName is string && data.actorName.size() >= 1 && data.actorName.size() <= 120 &&
+        data.action is string && data.action.size() >= 1 && data.action.size() <= 80 &&
+        data.entityType is string && data.entityType.size() >= 1 && data.entityType.size() <= 40 &&
+        isValidId(data.entityId) &&
+        data.details is string && data.details.size() <= 500 &&
+        data.createdAt is timestamp;
+    }
+
+    // --- Collection Rules ---
+    match /test/{docId} {
+      allow get: if isValidId(docId);
+    }
+
+    match /admins/{uid} {
+      allow get: if isValidId(uid) && (isBootstrappedAdmin() || (isSignedIn() && request.auth.uid == uid));
+      allow list: if isBootstrappedAdmin();
+      allow create: if isValidId(uid) && isBootstrappedAdmin() &&
+        isValidAdminUser(incoming()) &&
+        incoming().uid == uid &&
+        incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    match /users/{uid} {
+      allow get: if isValidId(uid) && (isAdmin() || (isSignedIn() && request.auth.uid == uid));
+      allow list: if isBootstrappedAdmin();
+      allow create: if isValidId(uid) && isAdmin() &&
+        isValidUserAccount(incoming()) &&
+        incoming().uid == uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(uid) && isAdmin() &&
+        isValidUserAccount(incoming()) &&
+        incoming().uid == existing().uid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'phone', 'status', 'updatedAt', 'memberId']);
+      allow delete: if isValidId(uid) && isAdmin();
+    }
+
+    match /members/{memberId} {
+      allow get: if isValidId(memberId) && (isAdmin() || (isSignedIn() && existing().memberUid == request.auth.uid));
+      allow list: if isBootstrappedAdmin() || (isSignedIn() && resource.data.memberUid == request.auth.uid);
+      allow create: if isValidId(memberId) && isAdmin() && isVerifiedUser() &&
+        isValidMember(incoming()) &&
+        incoming().memberId == memberId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(memberId) && isAdmin() && isVerifiedUser() &&
+        isValidMember(incoming()) &&
+        incoming().memberId == existing().memberId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'memberCode', 'memberUid', 'fullName', 'phone', 'joiningDate',
+          'dailySalaryRate', 'otRate', 'previousBalance', 'photoUrl',
+          'qrData', 'upiId', 'status', 'updatedAt'
+        ]);
+      allow delete: if isValidId(memberId) && isAdmin();
+    }
+
+    match /memberCredentials/{phoneNormalized} {
+      allow get: if isValidId(phoneNormalized) && isAdmin();
+      allow list: if isBootstrappedAdmin();
+      allow create: if isValidId(phoneNormalized) && isAdmin() && isVerifiedUser() &&
+        isValidMemberCredential(incoming()) &&
+        incoming().phoneNormalized == phoneNormalized &&
+        incoming().updatedBy == request.auth.uid &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(phoneNormalized) && isAdmin() && isVerifiedUser() &&
+        isValidMemberCredential(incoming()) &&
+        incoming().phoneNormalized == existing().phoneNormalized &&
+        incoming().memberId == existing().memberId &&
+        incoming().updatedBy == request.auth.uid &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['passwordHash', 'passwordSalt', 'memberUid', 'authEmail', 'updatedBy', 'updatedAt']);
+      allow delete: if isValidId(phoneNormalized) && isAdmin();
+    }
+
+    match /attendance/{recordId} {
+      allow get: if isValidId(recordId) && (isAdmin() || (isSignedIn() && existing().memberUid == request.auth.uid));
+      allow list: if isBootstrappedAdmin() || (isSignedIn() && resource.data.memberUid == request.auth.uid);
+      allow create: if isValidId(recordId) && isAdmin() && isVerifiedUser() &&
+        isValidAttendance(incoming()) &&
+        incoming().recordId == recordId &&
+        exists(/databases/$(database)/documents/members/$(incoming().memberId)) &&
+        incoming().updatedBy == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(recordId) && isAdmin() && isVerifiedUser() &&
+        isValidAttendance(incoming()) &&
+        incoming().recordId == existing().recordId &&
+        incoming().memberId == existing().memberId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedBy == request.auth.uid &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'workingHours', 'otHours', 'notes', 'memberUid', 'updatedBy', 'updatedAt']);
+      allow delete: if isValidId(recordId) && isAdmin();
+    }
+
+    match /overtimeRecords/{recordId} {
+      allow get: if isValidId(recordId) && (isAdmin() || (isSignedIn() && existing().memberUid == request.auth.uid));
+      allow list: if isBootstrappedAdmin() || (isSignedIn() && resource.data.memberUid == request.auth.uid);
+      allow create: if isValidId(recordId) && isAdmin() && isVerifiedUser() &&
+        isValidOvertime(incoming()) &&
+        incoming().recordId == recordId &&
+        exists(/databases/$(database)/documents/members/$(incoming().memberId)) &&
+        incoming().createdBy == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(recordId) && isAdmin() && isVerifiedUser() &&
+        isValidOvertime(incoming()) &&
+        incoming().recordId == existing().recordId &&
+        incoming().memberId == existing().memberId &&
+        incoming().createdBy == existing().createdBy &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['date', 'hours', 'rate', 'amount', 'notes', 'memberUid', 'updatedAt']);
+      allow delete: if isValidId(recordId) && isAdmin();
+    }
+
+    match /salaryRecords/{recordId} {
+      allow get: if isValidId(recordId) && (isAdmin() || (isSignedIn() && existing().memberUid == request.auth.uid));
+      allow list: if isBootstrappedAdmin() || (isSignedIn() && resource.data.memberUid == request.auth.uid);
+      allow create: if isValidId(recordId) && isAdmin() && isVerifiedUser() &&
+        isValidSalaryRecord(incoming()) &&
+        incoming().recordId == recordId &&
+        exists(/databases/$(database)/documents/members/$(incoming().memberId)) &&
+        incoming().createdBy == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(recordId) && isAdmin() && isVerifiedUser() &&
+        isValidSalaryRecord(incoming()) &&
+        incoming().recordId == existing().recordId &&
+        incoming().memberId == existing().memberId &&
+        incoming().createdBy == existing().createdBy &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'presentDays', 'absentDays', 'workingHours', 'otHours', 'dailyRate', 'otRate',
+          'baseSalary', 'otSalary', 'grossSalary', 'normalAdvance', 'cookingAdvance',
+          'previousPayments', 'netBalance', 'balanceDirection', 'memberUid', 'updatedAt'
+        ]);
+      allow delete: if isValidId(recordId) && isAdmin();
+    }
+
+    match /advances/{advanceId} {
+      allow get: if isValidId(advanceId) && (isAdmin() || (isSignedIn() && existing().memberUid == request.auth.uid));
+      allow list: if isBootstrappedAdmin() || (isSignedIn() && resource.data.memberUid == request.auth.uid);
+      allow create: if isValidId(advanceId) && isAdmin() && isVerifiedUser() &&
+        isValidAdvance(incoming()) &&
+        incoming().advanceId == advanceId &&
+        exists(/databases/$(database)/documents/members/$(incoming().memberId)) &&
+        incoming().createdBy == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(advanceId) && isAdmin() && isVerifiedUser() &&
+        isValidAdvance(incoming()) &&
+        incoming().advanceId == existing().advanceId &&
+        incoming().memberId == existing().memberId &&
+        incoming().createdBy == existing().createdBy &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['category', 'transactionType', 'amount', 'date', 'notes', 'paymentMethod', 'reference', 'memberUid', 'updatedAt']);
+      allow delete: if isValidId(advanceId) && isAdmin();
+    }
+
+    match /payments/{paymentId} {
+      allow get: if isValidId(paymentId) && (isAdmin() || (isSignedIn() && existing().memberUid == request.auth.uid));
+      allow list: if isBootstrappedAdmin() || (isSignedIn() && resource.data.memberUid == request.auth.uid);
+      allow create: if isValidId(paymentId) && isAdmin() && isVerifiedUser() &&
+        isValidPayment(incoming()) &&
+        incoming().paymentId == paymentId &&
+        exists(/databases/$(database)/documents/members/$(incoming().memberId)) &&
+        incoming().createdBy == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(paymentId) && isAdmin() && isVerifiedUser() &&
+        isValidPayment(incoming()) &&
+        incoming().paymentId == existing().paymentId &&
+        incoming().memberId == existing().memberId &&
+        incoming().createdBy == existing().createdBy &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['direction', 'amount', 'date', 'method', 'reference', 'verified', 'notes', 'memberUid', 'updatedAt']);
+      allow delete: if isValidId(paymentId) && isAdmin();
+    }
+
+    match /salarySlips/{slipId} {
+      allow get: if isValidId(slipId) && (isAdmin() || (isSignedIn() && existing().memberUid == request.auth.uid));
+      allow list: if isBootstrappedAdmin() || (isSignedIn() && resource.data.memberUid == request.auth.uid);
+      allow create: if isValidId(slipId) && isAdmin() && isVerifiedUser() &&
+        isValidSalarySlip(incoming()) &&
+        incoming().slipId == slipId &&
+        exists(/databases/$(database)/documents/members/$(incoming().memberId)) &&
+        incoming().createdBy == request.auth.uid &&
+        incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if isValidId(slipId) && isAdmin();
+    }
+
+    match /settings/{settingId} {
+      allow get: if isValidId(settingId) && isSignedIn();
+      allow list: if isBootstrappedAdmin();
+      allow create: if isValidId(settingId) && isAdmin() && isVerifiedUser() &&
+        isValidSettings(incoming()) &&
+        incoming().settingId == settingId &&
+        incoming().updatedBy == request.auth.uid &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(settingId) && isAdmin() && isVerifiedUser() &&
+        isValidSettings(incoming()) &&
+        incoming().settingId == existing().settingId &&
+        incoming().updatedBy == request.auth.uid &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'companyName', 'tagline', 'upiId', 'upiName', 'adminQrImage',
+          'smsProviderEndpoint', 'smsSenderId', 'defaultOtRate', 'standardWorkHours',
+          'updatedBy', 'updatedAt'
+        ]);
+      allow delete: if false;
+    }
+
+    match /notifications/{notificationId} {
+      allow get: if isValidId(notificationId) && (isAdmin() || (isSignedIn() && existing().memberUid == request.auth.uid));
+      allow list: if isBootstrappedAdmin() || (isSignedIn() && resource.data.memberUid == request.auth.uid);
+      allow create: if isValidId(notificationId) && isAdmin() && isVerifiedUser() &&
+        isValidNotification(incoming()) &&
+        incoming().notificationId == notificationId &&
+        incoming().createdBy == request.auth.uid &&
+        incoming().createdAt == request.time;
+      allow update: if isValidId(notificationId) && isSignedIn() &&
+        isValidNotification(incoming()) &&
+        incoming().notificationId == existing().notificationId &&
+        incoming().memberUid == existing().memberUid &&
+        incoming().createdBy == existing().createdBy &&
+        incoming().createdAt == existing().createdAt &&
+        (isAdmin() || (existing().memberUid == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['read'])));
+      allow delete: if isValidId(notificationId) && isAdmin();
+    }
+
+    match /activityLogs/{logId} {
+      allow get: if isValidId(logId) && isAdmin();
+      allow list: if isBootstrappedAdmin();
+      allow create: if isValidId(logId) && isAdmin() && isVerifiedUser() &&
+        isValidActivityLog(incoming()) &&
+        incoming().logId == logId &&
+        incoming().actorUid == request.auth.uid &&
+        incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+  }
+}
