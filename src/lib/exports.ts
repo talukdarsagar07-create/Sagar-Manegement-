@@ -152,14 +152,22 @@ export async function downloadSalarySlipPDF(slip: SalarySlip) {
 export async function printSalarySlipPDF(slip: SalarySlip) {
   const doc = await buildSalarySlipPDF(slip);
   doc.autoPrint();
-  const blobUrl = doc.output('bloburl');
+  const blobUrl = String(doc.output('bloburl'));
   const iframe = document.createElement('iframe');
   iframe.style.display = 'none';
-  iframe.src = String(blobUrl);
+  iframe.src = blobUrl;
   document.body.appendChild(iframe);
   iframe.onload = () => {
-    iframe.contentWindow?.focus();
-    iframe.contentWindow?.print();
+    try {
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+    } catch {
+      doc.save(`Salary_Slip_${slip.memberCode}_${slip.startDate}_to_${slip.endDate}.pdf`);
+    }
+    setTimeout(() => {
+      iframe.remove();
+      URL.revokeObjectURL(blobUrl);
+    }, 60000);
   };
 }
 
@@ -170,12 +178,18 @@ export async function shareSalarySlipPDF(slip: SalarySlip): Promise<boolean> {
   const file = new File([blob], fileName, { type: 'application/pdf' });
 
   if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-    await navigator.share({
-      title: `Salary Slip - ${slip.memberName}`,
-      text: `SAGAR MANAGEMENT Salary Slip (${slip.periodLabel}) - Final Balance: ${pdfCurrency(Math.abs(slip.finalBalance))} (${slip.balanceDirection})`,
-      files: [file],
-    });
-    return true;
+    try {
+      await navigator.share({
+        title: `Salary Slip - ${slip.memberName}`,
+        text: `SAGAR MANAGEMENT Salary Slip (${slip.periodLabel}) - Final Balance: ${pdfCurrency(Math.abs(slip.finalBalance))} (${slip.balanceDirection})`,
+        files: [file],
+      });
+      return true;
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        return false;
+      }
+    }
   }
   doc.save(fileName);
   return false;

@@ -445,7 +445,7 @@ export const ReportsSettingsView: React.FC<ReportsSettingsViewProps> = ({
                 <input
                   type="date"
                   value={reportDate}
-                  onChange={(e) => setReportDate(e.target.value)}
+                  onChange={(e) => setReportDate(e.target.value || today)}
                   className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                 />
               )}

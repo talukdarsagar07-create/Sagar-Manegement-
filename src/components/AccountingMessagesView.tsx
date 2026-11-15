@@ -4,7 +4,7 @@ import {
   computeMemberFinancialSummary,
   formatCurrency,
 } from '../lib/accounting';
-import { apiUrl, hasConfiguredApiBase, isNativePlatform } from '../lib/apiClient';
+import { apiUrl, shouldUseBackendApi } from '../lib/apiClient';
 import { auth } from '../lib/firebase';
 import { createNotificationRecord } from '../lib/firestoreApi';
 import {
@@ -103,30 +103,56 @@ export const AccountingMessagesView: React.FC<AccountingMessagesViewProps> = ({
 
   const handleSendSmsGateway = async () => {
     if (!selectedSummary || !auth.currentUser) return;
-    if (isNativePlatform() && !hasConfiguredApiBase()) {
-      onToast('Use the Device SMS or WhatsApp launcher in the Android APK.', 'error');
-      return;
-    }
     setSendingSms(true);
     try {
-      const idToken = await auth.currentUser.getIdToken();
-      const resp = await fetch(apiUrl('/api/notifications/sms'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${idToken}`,
-        },
-        body: JSON.stringify({
-          phone: selectedSummary.member.phone,
-          message: customMessage,
-          providerEndpoint: settings?.smsProviderEndpoint,
-          senderId: settings?.smsSenderId,
-        }),
-      });
-      const data = (await resp.json()) as { ok?: boolean; error?: string };
-      if (!resp.ok || !data.ok) {
-        onToast(data.error || 'SMS gateway not configured. Use Device SMS button.', 'error');
-      } else {
+      if (shouldUseBackendApi()) {
+        const idToken = await auth.currentUser.getIdToken();
+        const resp = await fetch(apiUrl('/api/notifications/sms'), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({
+            phone: selectedSummary.member.phone,
+            message: customMessage,
+            providerEndpoint: settings?.smsProviderEndpoint,
+            senderId: settings?.smsSenderId,
+          }),
+        });
+        const contentType = resp.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const data = (await resp.json()) as { ok?: boolean; error?: string };
+          if (!resp.ok || !data.ok) {
+            onToast(data.error || 'SMS gateway not configured. Use Open Phone SMS App.', 'error');
+          } else {
+            await createNotificationRecord({
+              member: selectedSummary.member,
+              title: `SMS: ${templateType.toUpperCase()}`,
+              message: customMessage,
+              type: 'system',
+              channel: 'sms',
+            }).catch(() => {});
+            onToast(`SMS dispatched to ${selectedSummary.member.phone}.`);
+          }
+          return;
+        }
+      }
+
+      if (settings?.smsProviderEndpoint) {
+        const phoneDigits = selectedSummary.member.phone.replace(/\D/g, '').slice(-10);
+        const smsResp = await fetch(settings.smsProviderEndpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            to: phoneDigits,
+            message: customMessage,
+            senderId: settings.smsSenderId || 'SAGARM',
+          }),
+        });
+        if (!smsResp.ok) {
+          throw new Error(`SMS Gateway error (${smsResp.status}). Use Open Phone SMS App.`);
+        }
         await createNotificationRecord({
           member: selectedSummary.member,
           title: `SMS: ${templateType.toUpperCase()}`,
@@ -135,9 +161,11 @@ export const AccountingMessagesView: React.FC<AccountingMessagesViewProps> = ({
           channel: 'sms',
         }).catch(() => {});
         onToast(`SMS dispatched to ${selectedSummary.member.phone}.`);
+      } else {
+        handleDeviceSms();
       }
     } catch (err) {
-      onToast(err instanceof Error ? err.message : 'SMS send failed', 'error');
+      onToast(err instanceof Error ? err.message : 'SMS send failed. Use Open Phone SMS App.', 'error');
     } finally {
       setSendingSms(false);
     }

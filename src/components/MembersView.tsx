@@ -16,6 +16,7 @@ import {
   formatCurrency,
   todayISO,
 } from '../lib/accounting';
+import { shouldUseBackendApi } from '../lib/apiClient';
 import {
   createMemberWithCredentials,
   deleteMemberRecord,
@@ -111,6 +112,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
 
   // Password Reset Modal
   const [resetTarget, setResetTarget] = useState<Member | null>(null);
+  const [currentPassForReset, setCurrentPassForReset] = useState('');
   const [newPass, setNewPass] = useState('');
 
   // Delete Confirm
@@ -244,9 +246,14 @@ export const MembersView: React.FC<MembersViewProps> = ({
     }
     setSaving(true);
     try {
-      await resetMemberPasswordByAdmin(resetTarget, newPass);
+      await resetMemberPasswordByAdmin(
+        resetTarget,
+        newPass,
+        currentPassForReset.trim() || undefined
+      );
       onToast(`Password updated for ${resetTarget.fullName}.`);
       setResetTarget(null);
+      setCurrentPassForReset('');
       setNewPass('');
     } catch (err) {
       onToast(err instanceof Error ? err.message : 'Password reset failed.', 'error');
@@ -441,6 +448,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
                       type="button"
                       onClick={() => {
                         setResetTarget(m);
+                        setCurrentPassForReset('');
                         setNewPass('');
                       }}
                       title="Reset Password"
@@ -572,7 +580,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
                     type="date"
                     required
                     value={joiningDate}
-                    onChange={(e) => setJoiningDate(e.target.value)}
+                    onChange={(e) => setJoiningDate(e.target.value || todayISO())}
                     className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                   />
                 </div>
@@ -783,20 +791,43 @@ export const MembersView: React.FC<MembersViewProps> = ({
               Reset Password — {resetTarget.fullName}
             </h3>
             <p className="mt-1 text-xs text-slate-500">Mobile Login ID: {resetTarget.phone}</p>
-            <form onSubmit={handlePasswordReset} className="mt-4 space-y-4">
-              <input
-                type="text"
-                required
-                minLength={6}
-                value={newPass}
-                onChange={(e) => setNewPass(e.target.value)}
-                placeholder="Enter new password (min 6 chars)"
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-              />
-              <div className="flex justify-end gap-2">
+            <form onSubmit={handlePasswordReset} className="mt-4 space-y-3">
+              {!shouldUseBackendApi() && (
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+                    Current Member Password
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={currentPassForReset}
+                    onChange={(e) => setCurrentPassForReset(e.target.value)}
+                    placeholder="Enter member's existing password"
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  />
+                </div>
+              )}
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+                  New Password (min 6 chars)
+                </label>
+                <input
+                  type="text"
+                  required
+                  minLength={6}
+                  value={newPass}
+                  onChange={(e) => setNewPass(e.target.value)}
+                  placeholder="Enter new password (min 6 chars)"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-1">
                 <button
                   type="button"
-                  onClick={() => setResetTarget(null)}
+                  onClick={() => {
+                    setResetTarget(null);
+                    setCurrentPassForReset('');
+                  }}
                   className="rounded-lg border border-slate-200 px-3.5 py-2 text-xs font-medium dark:border-slate-700"
                 >
                   Cancel
@@ -804,9 +835,9 @@ export const MembersView: React.FC<MembersViewProps> = ({
                 <button
                   type="submit"
                   disabled={saving}
-                  className="rounded-lg bg-[#0B1F3A] px-4 py-2 text-xs font-semibold text-white hover:bg-[#132E54]"
+                  className="rounded-lg bg-[#0B1F3A] px-4 py-2 text-xs font-semibold text-white hover:bg-[#132E54] disabled:opacity-50"
                 >
-                  Update Password
+                  {saving ? 'Updating...' : 'Update Password'}
                 </button>
               </div>
             </form>

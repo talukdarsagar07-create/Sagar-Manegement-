@@ -4,6 +4,7 @@ import {
   formatCurrency,
   getMonthRange,
   getWeekRange,
+  safeNumber,
   todayISO,
 } from '../lib/accounting';
 import { saveOvertimeRecord, upsertAttendanceRecord } from '../lib/firestoreApi';
@@ -199,14 +200,14 @@ export const AttendanceOvertimeView: React.FC<AttendanceOvertimeViewProps> = ({
             <input
               type="date"
               value={anchorDate}
-              onChange={(e) => setAnchorDate(e.target.value)}
+              onChange={(e) => setAnchorDate(e.target.value || today)}
               className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold dark:border-slate-800 dark:bg-slate-900 dark:text-white min-h-[40px]"
             />
           ) : (
             <input
               type="month"
               value={selectedMonth}
-              onChange={(e) => setSelectedMonth(e.target.value)}
+              onChange={(e) => setSelectedMonth(e.target.value || today.slice(0, 7))}
               className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold dark:border-slate-800 dark:bg-slate-900 dark:text-white min-h-[40px]"
             />
           )}
@@ -221,7 +222,7 @@ export const AttendanceOvertimeView: React.FC<AttendanceOvertimeViewProps> = ({
           <input
             type="date"
             value={bulkDate}
-            onChange={(e) => setBulkDate(e.target.value)}
+            onChange={(e) => setBulkDate(e.target.value || today)}
             className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-white"
           />
         </div>
@@ -288,14 +289,18 @@ export const AttendanceOvertimeView: React.FC<AttendanceOvertimeViewProps> = ({
                     if (rec?.status === 'A') absentDays += 1;
                     const ot = otMap.get(`${m.memberId}_${day}`);
                     if (ot) {
-                      totalOtHours += Number(ot.hours || 0);
-                      totalOtPay += Number(ot.amount || 0);
+                      totalOtHours += safeNumber(ot.hours);
+                      totalOtPay += safeNumber(ot.amount);
+                    } else if (rec && safeNumber(rec.otHours) > 0) {
+                      const hrs = safeNumber(rec.otHours);
+                      totalOtHours += hrs;
+                      totalOtPay += hrs * safeNumber(m.otRate);
                     }
                   });
 
                   const marked = presentDays + absentDays;
                   const pct = marked > 0 ? Math.round((presentDays / marked) * 100) : 0;
-                  const normalSalary = presentDays * Number(m.dailySalaryRate || 0);
+                  const normalSalary = presentDays * safeNumber(m.dailySalaryRate);
                   const combined = normalSalary + totalOtPay;
 
                   return (

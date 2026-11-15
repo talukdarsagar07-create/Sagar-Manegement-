@@ -49,16 +49,14 @@ import {
   BOOTSTRAPPED_ADMIN_EMAIL,
   db,
   googleProvider,
-  handleFirestoreError,
-  OperationType,
 } from './lib/firebase';
 import {
   adminPhoneToAuthEmail,
   apiUrl,
-  hasConfiguredApiBase,
   isNativePlatform,
   memberPhoneToAuthEmail,
   normalizePhoneDigits,
+  shouldUseBackendApi,
 } from './lib/apiClient';
 import {
   ensureAdminBootstrap,
@@ -173,6 +171,13 @@ export default function App() {
 
         const userSnap = await getDoc(doc(db, 'users', user.uid));
         if (userSnap.exists() && userSnap.data()?.role === 'member') {
+          if (userSnap.data()?.status === 'inactive') {
+            setRole(null);
+            setAuthError('Your member account is inactive. Please contact Admin.');
+            await signOut(auth).catch(() => {});
+            setAuthReady(true);
+            return;
+          }
           setRole('member');
           setAuthReady(true);
           return;
@@ -198,46 +203,52 @@ export default function App() {
   useEffect(() => {
     if (!authReady || role !== 'admin' || !firebaseUser) return;
 
+    const reportSyncError = (label: string) => (err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Firestore sync error (${label}):`, msg);
+      showToast(`Sync issue on ${label}: ${msg}`, 'error');
+    };
+
     const unsubs = [
       onSnapshot(
         collection(db, 'members'),
         (snap) => setMembers(snap.docs.map((d) => d.data() as Member)),
-        (err) => handleFirestoreError(err, OperationType.LIST, 'members')
+        reportSyncError('members')
       ),
       onSnapshot(
         collection(db, 'attendance'),
         (snap) => setAttendance(snap.docs.map((d) => d.data() as AttendanceRecord)),
-        (err) => handleFirestoreError(err, OperationType.LIST, 'attendance')
+        reportSyncError('attendance')
       ),
       onSnapshot(
         collection(db, 'overtimeRecords'),
         (snap) => setOvertime(snap.docs.map((d) => d.data() as OvertimeRecord)),
-        (err) => handleFirestoreError(err, OperationType.LIST, 'overtimeRecords')
+        reportSyncError('overtimeRecords')
       ),
       onSnapshot(
         collection(db, 'advances'),
         (snap) => setAdvances(snap.docs.map((d) => d.data() as AdvanceTransaction)),
-        (err) => handleFirestoreError(err, OperationType.LIST, 'advances')
+        reportSyncError('advances')
       ),
       onSnapshot(
         collection(db, 'payments'),
         (snap) => setPayments(snap.docs.map((d) => d.data() as PaymentTransaction)),
-        (err) => handleFirestoreError(err, OperationType.LIST, 'payments')
+        reportSyncError('payments')
       ),
       onSnapshot(
         collection(db, 'salarySlips'),
         (snap) => setSlips(snap.docs.map((d) => d.data() as SalarySlip)),
-        (err) => handleFirestoreError(err, OperationType.LIST, 'salarySlips')
+        reportSyncError('salarySlips')
       ),
       onSnapshot(
         collection(db, 'activityLogs'),
         (snap) => setActivityLogs(snap.docs.map((d) => d.data() as ActivityLog)),
-        (err) => handleFirestoreError(err, OperationType.LIST, 'activityLogs')
+        reportSyncError('activityLogs')
       ),
       onSnapshot(
         doc(db, 'settings', 'app'),
         (snap) => setSettings(snap.exists() ? (snap.data() as AppSettings) : null),
-        (err) => handleFirestoreError(err, OperationType.GET, 'settings/app')
+        reportSyncError('settings/app')
       ),
     ];
 
@@ -248,48 +259,53 @@ export default function App() {
   useEffect(() => {
     if (!authReady || role !== 'member') return;
 
+    const reportMemberSyncError = (label: string) => (err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Member Firestore sync error (${label}):`, msg);
+    };
+
     if (firebaseUser) {
       const uid = firebaseUser.uid;
       const unsubs = [
         onSnapshot(
           query(collection(db, 'members'), where('memberUid', '==', uid)),
           (snap) => setMembers(snap.docs.map((d) => d.data() as Member)),
-          (err) => handleFirestoreError(err, OperationType.LIST, 'members')
+          reportMemberSyncError('members')
         ),
         onSnapshot(
           query(collection(db, 'attendance'), where('memberUid', '==', uid)),
           (snap) => setAttendance(snap.docs.map((d) => d.data() as AttendanceRecord)),
-          (err) => handleFirestoreError(err, OperationType.LIST, 'attendance')
+          reportMemberSyncError('attendance')
         ),
         onSnapshot(
           query(collection(db, 'overtimeRecords'), where('memberUid', '==', uid)),
           (snap) => setOvertime(snap.docs.map((d) => d.data() as OvertimeRecord)),
-          (err) => handleFirestoreError(err, OperationType.LIST, 'overtimeRecords')
+          reportMemberSyncError('overtimeRecords')
         ),
         onSnapshot(
           query(collection(db, 'advances'), where('memberUid', '==', uid)),
           (snap) => setAdvances(snap.docs.map((d) => d.data() as AdvanceTransaction)),
-          (err) => handleFirestoreError(err, OperationType.LIST, 'advances')
+          reportMemberSyncError('advances')
         ),
         onSnapshot(
           query(collection(db, 'payments'), where('memberUid', '==', uid)),
           (snap) => setPayments(snap.docs.map((d) => d.data() as PaymentTransaction)),
-          (err) => handleFirestoreError(err, OperationType.LIST, 'payments')
+          reportMemberSyncError('payments')
         ),
         onSnapshot(
           query(collection(db, 'salarySlips'), where('memberUid', '==', uid)),
           (snap) => setSlips(snap.docs.map((d) => d.data() as SalarySlip)),
-          (err) => handleFirestoreError(err, OperationType.LIST, 'salarySlips')
+          reportMemberSyncError('salarySlips')
         ),
         onSnapshot(
           query(collection(db, 'notifications'), where('memberUid', '==', uid)),
           (snap) => setNotifications(snap.docs.map((d) => d.data() as NotificationItem)),
-          (err) => handleFirestoreError(err, OperationType.LIST, 'notifications')
+          reportMemberSyncError('notifications')
         ),
         onSnapshot(
           doc(db, 'settings', 'app'),
           (snap) => setSettings(snap.exists() ? (snap.data() as AppSettings) : null),
-          (err) => handleFirestoreError(err, OperationType.GET, 'settings/app')
+          reportMemberSyncError('settings/app')
         ),
       ];
       return () => unsubs.forEach((u) => u());
@@ -329,6 +345,27 @@ export default function App() {
     }
   }, [authReady, role, firebaseUser, memberSessionToken]);
 
+  const formatFriendlyAuthError = (err: unknown, fallback: string): string => {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('operation-not-allowed')) {
+      return 'Email/Password provider is not enabled in Firebase Console yet. Enable Authentication → Sign-in method → Email/Password in Firebase Console.';
+    }
+    if (
+      msg.includes('invalid-credential') ||
+      msg.includes('wrong-password') ||
+      msg.includes('user-not-found')
+    ) {
+      return fallback;
+    }
+    if (msg.includes('too-many-requests')) {
+      return 'Too many failed login attempts. Please wait a few minutes and try again.';
+    }
+    if (msg.includes('network-request-failed')) {
+      return 'Network error while connecting to Firebase. Check your internet connection.';
+    }
+    return msg || fallback;
+  };
+
   const handleAdminGoogleLogin = async () => {
     setAuthError(null);
     setAuthLoading(true);
@@ -358,44 +395,51 @@ export default function App() {
         return;
       }
 
-      if (isNativePlatform() && !hasConfiguredApiBase()) {
-        await signInWithEmailAndPassword(auth, adminPhoneToAuthEmail(phoneNorm), password);
-        return;
+      if (shouldUseBackendApi()) {
+        try {
+          const resp = await fetch(apiUrl('/api/auth/admin-login'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ phone, password }),
+          });
+          const contentType = resp.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            const data = (await resp.json()) as {
+              ok?: boolean;
+              error?: string;
+              mode?: 'custom_token' | 'email_password';
+              customToken?: string;
+              authEmail?: string;
+            };
+            if (!resp.ok || !data.ok) {
+              setAuthError(data.error || 'Invalid Admin mobile number or password.');
+              return;
+            }
+            if (data.mode === 'custom_token' && data.customToken) {
+              await signInWithCustomToken(auth, data.customToken);
+              return;
+            }
+            if (data.mode === 'email_password' && data.authEmail) {
+              await signInWithEmailAndPassword(auth, data.authEmail, password);
+              return;
+            }
+          }
+        } catch (err) {
+          if (
+            err instanceof Error &&
+            !(err instanceof TypeError) &&
+            !err.message.includes('Failed to fetch')
+          ) {
+            throw err;
+          }
+        }
       }
 
-      const resp = await fetch(apiUrl('/api/auth/admin-login'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone, password }),
-      });
-      const data = (await resp.json()) as {
-        ok?: boolean;
-        error?: string;
-        mode?: 'custom_token' | 'email_password';
-        customToken?: string;
-        authEmail?: string;
-      };
-      if (!resp.ok || !data.ok) {
-        setAuthError(data.error || 'Invalid Admin mobile number or password.');
-        return;
-      }
-
-      if (data.mode === 'custom_token' && data.customToken) {
-        await signInWithCustomToken(auth, data.customToken);
-      } else if (data.mode === 'email_password' && data.authEmail) {
-        await signInWithEmailAndPassword(auth, data.authEmail, password);
-      } else {
-        setAuthError('Unsupported Admin authentication response.');
-      }
+      await signInWithEmailAndPassword(auth, adminPhoneToAuthEmail(phoneNorm), password);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes('operation-not-allowed')) {
-        setAuthError(
-          'Email/Password provider is not enabled in Firebase Console yet. Enable Authentication → Sign-in method → Email/Password in Firebase Console.'
-        );
-      } else {
-        setAuthError(msg || 'Admin login failed.');
-      }
+      setAuthError(
+        formatFriendlyAuthError(err, 'Invalid Admin mobile number or password.')
+      );
     } finally {
       setAuthLoading(false);
     }
@@ -416,8 +460,18 @@ export default function App() {
         !currentUser.emailVerified ||
         currentUser.email !== BOOTSTRAPPED_ADMIN_EMAIL
       ) {
-        const cred = await signInWithPopup(auth, googleProvider);
-        currentUser = cred.user;
+        try {
+          const cred = await signInWithPopup(auth, googleProvider);
+          currentUser = cred.user;
+        } catch (popupErr) {
+          if (isNativePlatform()) {
+            setAuthError(
+              'Google popup sign-in is blocked in the Android WebView. Complete First-Time Admin Setup once from a web browser, then sign in here using Admin Mobile Number + Password.'
+            );
+            return;
+          }
+          throw popupErr;
+        }
       }
 
       if (
@@ -458,8 +512,7 @@ export default function App() {
         `Admin mobile login (${provisioned.phoneNormalized}) created successfully.`
       );
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setAuthError(msg || 'First-Time Admin Setup failed.');
+      setAuthError(formatFriendlyAuthError(err, 'First-Time Admin Setup failed.'));
     } finally {
       setupInProgressRef.current = false;
       setAuthLoading(false);
@@ -476,43 +529,58 @@ export default function App() {
         return;
       }
 
-      if (isNativePlatform() && !hasConfiguredApiBase()) {
-        await signInWithEmailAndPassword(auth, memberPhoneToAuthEmail(phoneNorm), password);
-        setRole('member');
-        return;
+      if (shouldUseBackendApi()) {
+        try {
+          const resp = await fetch(apiUrl('/api/auth/member-login'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ phone, password }),
+          });
+          const contentType = resp.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            const data = (await resp.json()) as {
+              ok?: boolean;
+              error?: string;
+              mode?: 'custom_token' | 'email_password' | 'server_session';
+              customToken?: string;
+              authEmail?: string;
+              sessionToken?: string;
+            };
+            if (!resp.ok || !data.ok) {
+              setAuthError(data.error || 'Member login failed.');
+              return;
+            }
+            if (data.mode === 'custom_token' && data.customToken) {
+              await signInWithCustomToken(auth, data.customToken);
+              setRole('member');
+              return;
+            }
+            if (data.mode === 'email_password' && data.authEmail) {
+              await signInWithEmailAndPassword(auth, data.authEmail, password);
+              setRole('member');
+              return;
+            }
+            if (data.mode === 'server_session' && data.sessionToken) {
+              localStorage.setItem('sagar_member_token', data.sessionToken);
+              setMemberSessionToken(data.sessionToken);
+              setRole('member');
+              return;
+            }
+          }
+        } catch (err) {
+          if (
+            err instanceof Error &&
+            !(err instanceof TypeError) &&
+            !err.message.includes('Failed to fetch')
+          ) {
+            throw err;
+          }
+        }
       }
 
-      const resp = await fetch(apiUrl('/api/auth/member-login'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone, password }),
-      });
-      const data = (await resp.json()) as {
-        ok?: boolean;
-        error?: string;
-        mode?: 'custom_token' | 'email_password' | 'server_session';
-        customToken?: string;
-        authEmail?: string;
-        sessionToken?: string;
-      };
-      if (!resp.ok || !data.ok) {
-        setAuthError(data.error || 'Member login failed.');
-        return;
-      }
-
-      if (data.mode === 'custom_token' && data.customToken) {
-        await signInWithCustomToken(auth, data.customToken);
-        setRole('member');
-      } else if (data.mode === 'email_password' && data.authEmail) {
-        await signInWithEmailAndPassword(auth, data.authEmail, password);
-        setRole('member');
-      } else if (data.mode === 'server_session' && data.sessionToken) {
-        localStorage.setItem('sagar_member_token', data.sessionToken);
-        setMemberSessionToken(data.sessionToken);
-        setRole('member');
-      }
+      await signInWithEmailAndPassword(auth, memberPhoneToAuthEmail(phoneNorm), password);
     } catch (err) {
-      setAuthError(err instanceof Error ? err.message : 'Member login failed.');
+      setAuthError(formatFriendlyAuthError(err, 'Invalid mobile number or password.'));
     } finally {
       setAuthLoading(false);
     }

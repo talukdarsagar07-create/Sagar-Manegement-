@@ -195,7 +195,7 @@ export const SalaryView: React.FC<SalaryViewProps> = ({
             <input
               type="date"
               value={weekAnchor}
-              onChange={(e) => setWeekAnchor(e.target.value)}
+              onChange={(e) => setWeekAnchor(e.target.value || today)}
               className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold dark:border-slate-800 dark:bg-slate-900 dark:text-white"
             />
           )}
@@ -203,7 +203,7 @@ export const SalaryView: React.FC<SalaryViewProps> = ({
             <input
               type="month"
               value={monthVal}
-              onChange={(e) => setMonthVal(e.target.value)}
+              onChange={(e) => setMonthVal(e.target.value || today.slice(0, 7))}
               className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold dark:border-slate-800 dark:bg-slate-900 dark:text-white"
             />
           )}
@@ -212,14 +212,14 @@ export const SalaryView: React.FC<SalaryViewProps> = ({
               <input
                 type="date"
                 value={customStart}
-                onChange={(e) => setCustomStart(e.target.value)}
+                onChange={(e) => setCustomStart(e.target.value || today.slice(0, 8) + '01')}
                 className="rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-xs dark:border-slate-800 dark:bg-slate-900 dark:text-white"
               />
               <span className="text-xs text-slate-400">to</span>
               <input
                 type="date"
                 value={customEnd}
-                onChange={(e) => setCustomEnd(e.target.value)}
+                onChange={(e) => setCustomEnd(e.target.value || today)}
                 className="rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-xs dark:border-slate-800 dark:bg-slate-900 dark:text-white"
               />
             </div>
@@ -398,10 +398,13 @@ export const SalaryView: React.FC<SalaryViewProps> = ({
         confirmLabel="Delete Slip"
         cancelLabel={t.cancel}
         onConfirm={async () => {
-          if (deleteSlipId) {
+          if (!deleteSlipId) return;
+          try {
             await deleteSalarySlip(deleteSlipId);
             onToast('Salary slip removed.');
             setDeleteSlipId(null);
+          } catch (err) {
+            onToast(err instanceof Error ? err.message : 'Failed to delete salary slip', 'error');
           }
         }}
         onCancel={() => setDeleteSlipId(null)}

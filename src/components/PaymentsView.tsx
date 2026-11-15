@@ -432,7 +432,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                     type="date"
                     required
                     value={date}
-                    onChange={(e) => setDate(e.target.value)}
+                    onChange={(e) => setDate(e.target.value || todayISO())}
                     className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                   />
                 </div>
@@ -498,10 +498,13 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
         confirmLabel="Delete"
         cancelLabel={t.cancel}
         onConfirm={async () => {
-          if (deleteTarget) {
+          if (!deleteTarget) return;
+          try {
             await deletePaymentTransaction(deleteTarget);
             onToast('Payment record deleted.');
             setDeleteTarget(null);
+          } catch (err) {
+            onToast(err instanceof Error ? err.message : 'Failed to delete payment', 'error');
           }
         }}
         onCancel={() => setDeleteTarget(null)}

@@ -79,6 +79,11 @@ function adminPhoneToAuthEmail(phoneNormalized: string): string {
 
 function hashPassword(password: string, salt?: string): { hash: string; salt: string } {
   const actualSalt = salt || crypto.randomBytes(16).toString('hex');
+  if (actualSalt.startsWith('pbkdf2:')) {
+    const rawSalt = actualSalt.slice(7);
+    const hash = crypto.pbkdf2Sync(password, rawSalt, 100000, 64, 'sha512').toString('hex');
+    return { hash, salt: actualSalt };
+  }
   const hash = crypto.scryptSync(password, actualSalt, 64).toString('hex');
   return { hash, salt: actualSalt };
 }
