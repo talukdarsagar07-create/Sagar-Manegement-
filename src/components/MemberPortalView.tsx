@@ -18,13 +18,17 @@ import logoUrl from '../assets/images/sagar_management_logo_1794727716847.jpg';
 import {
   computeMemberFinancialSummary,
   formatCurrency,
+  getAttendanceCode,
+  getBalanceVisuals,
+  getStandardWorkHours,
+  isPartialAttendance,
 } from '../lib/accounting';
 import {
   downloadSalarySlipPDF,
   printSalarySlipPDF,
   shareSalarySlipPDF,
 } from '../lib/exports';
-import { TRANSLATIONS, translateDirection } from '../lib/i18n';
+import { TRANSLATIONS } from '../lib/i18n';
 import type {
   AdvanceTransaction,
   AppSettings,
@@ -36,6 +40,7 @@ import type {
   PaymentTransaction,
   SalarySlip,
 } from '../types';
+import { BalanceStatusBadge } from './BalanceStatusBadge';
 import { PWAInstallButton } from './PWAInstallButton';
 
 interface MemberPortalViewProps {
@@ -74,9 +79,20 @@ export const MemberPortalView: React.FC<MemberPortalViewProps> = ({
   const [memberQr, setMemberQr] = useState('');
   const [adminQr, setAdminQr] = useState('');
 
+  const stdHours = getStandardWorkHours(settings?.standardWorkHours);
+
   const summary = useMemo(
-    () => computeMemberFinancialSummary(member, attendance, overtime, advances, payments),
-    [member, attendance, overtime, advances, payments]
+    () =>
+      computeMemberFinancialSummary(
+        member,
+        attendance,
+        overtime,
+        advances,
+        payments,
+        undefined,
+        stdHours
+      ),
+    [member, attendance, overtime, advances, payments, stdHours]
   );
 
   useEffect(() => {
@@ -105,7 +121,7 @@ export const MemberPortalView: React.FC<MemberPortalViewProps> = ({
   return (
     <div className="min-h-screen bg-slate-50 pb-20 text-slate-900 dark:bg-slate-950 dark:text-slate-100 md:pb-8">
       {/* Top Bar */}
-      <header className="sticky top-0 z-30 flex items-center justify-between gap-4 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur-md sm:px-8 dark:border-slate-800 dark:bg-slate-900/95">
+      <header className="sticky top-0 z-30 flex items-center justify-between gap-4 border-b border-slate-200 bg-white/95 px-4 header-safe backdrop-blur-md sm:px-8 dark:border-slate-800 dark:bg-slate-900/95">
         <div className="flex items-center gap-3 min-w-0">
           <img
             src={logoUrl}
@@ -181,25 +197,19 @@ export const MemberPortalView: React.FC<MemberPortalViewProps> = ({
         {tab === 'overview' && (
           <div className="space-y-6">
             {/* Balance Banner */}
-            <div
-              className={`rounded-2xl border p-6 ${
-                summary.balanceDirection === 'YOU OWE MEMBER'
-                  ? 'border-emerald-200 bg-emerald-50 dark:border-emerald-900/50 dark:bg-emerald-950/30'
-                  : summary.balanceDirection === 'MEMBER OWES YOU'
-                    ? 'border-red-200 bg-red-50 dark:border-red-900/50 dark:bg-red-950/30'
-                    : 'border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900'
-              }`}
-            >
+            <div className={`rounded-2xl border p-6 ${getBalanceVisuals(summary.balanceDirection).bannerClass}`}>
               <p className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">
                 My Pending Balance
               </p>
-              <div className="mt-2 flex flex-wrap items-baseline justify-between gap-2">
-                <p className="font-mono text-3xl font-extrabold tabular-nums text-slate-900 dark:text-white">
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+                <p
+                  className={`font-mono text-3xl font-extrabold tabular-nums ${
+                    getBalanceVisuals(summary.balanceDirection).amountTextClass
+                  }`}
+                >
                   {formatCurrency(summary.absBalance)}
                 </p>
-                <span className="text-sm font-bold text-[#0B1F3A] dark:text-emerald-300">
-                  {translateDirection(summary.balanceDirection, lang, true)}
-                </span>
+                <BalanceStatusBadge direction={summary.balanceDirection} lang={lang} isMemberView />
               </div>
             </div>
 
@@ -291,19 +301,27 @@ export const MemberPortalView: React.FC<MemberPortalViewProps> = ({
               {sortedAtt.length === 0 ? (
                 <p className="p-6 text-center text-xs text-slate-500">No attendance marked yet.</p>
               ) : (
-                sortedAtt.map((a) => (
-                  <div key={a.recordId} className="flex items-center justify-between px-5 py-3 text-xs">
-                    <span className="font-mono font-semibold">{a.date}</span>
-                    <span>Work: {a.workingHours}h · OT: {a.otHours}h</span>
-                    <span
-                      className={`font-mono font-bold ${
-                        a.status === 'P' ? 'text-emerald-600' : 'text-red-600'
-                      }`}
-                    >
-                      {a.status === 'P' ? 'PRESENT' : 'ABSENT'}
-                    </span>
-                  </div>
-                ))
+                sortedAtt.map((a) => {
+                  const code = getAttendanceCode(a, stdHours);
+                  const partial = isPartialAttendance(a, stdHours);
+                  return (
+                    <div key={a.recordId} className="flex items-center justify-between px-5 py-3 text-xs">
+                      <span className="font-mono font-semibold">{a.date}</span>
+                      <span>Work: {a.workingHours}h · OT: {a.otHours}h</span>
+                      <span
+                        className={`inline-flex items-center rounded-md px-2 py-0.5 font-mono font-bold ${
+                          partial
+                            ? 'bg-sky-100 text-sky-800 dark:bg-sky-950/60 dark:text-sky-300'
+                            : a.status === 'P'
+                              ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
+                              : 'bg-red-100 text-red-700 dark:bg-red-950/60 dark:text-red-300'
+                        }`}
+                      >
+                        {partial ? `${code} (${a.workingHours}h)` : a.status === 'P' ? 'PRESENT (P)' : 'ABSENT (A)'}
+                      </span>
+                    </div>
+                  );
+                })
               )}
             </div>
           </div>
@@ -366,14 +384,21 @@ export const MemberPortalView: React.FC<MemberPortalViewProps> = ({
               <p className="p-8 text-center text-xs text-slate-500">No salary slips generated yet.</p>
             ) : (
               <div className="divide-y divide-slate-100 dark:divide-slate-800">
-                {slips.map((slip) => (
-                  <div key={slip.slipId} className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
-                    <div>
-                      <p className="text-sm font-bold">{slip.periodLabel}</p>
-                      <p className="text-xs text-slate-500">
-                        Gross: {formatCurrency(slip.grossSalary)} · Final: {formatCurrency(Math.abs(slip.finalBalance))} ({slip.balanceDirection})
-                      </p>
-                    </div>
+                {slips.map((slip) => {
+                  const slipVisual = getBalanceVisuals(slip.balanceDirection);
+                  return (
+                    <div key={slip.slipId} className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+                      <div>
+                        <p className="text-sm font-bold">{slip.periodLabel}</p>
+                        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                          <span>Gross: {formatCurrency(slip.grossSalary)}</span>
+                          <span>·</span>
+                          <span className={`font-mono font-bold ${slipVisual.amountTextClass}`}>
+                            {formatCurrency(Math.abs(slip.finalBalance))}
+                          </span>
+                          <BalanceStatusBadge direction={slip.balanceDirection} lang={lang} isMemberView />
+                        </div>
+                      </div>
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
@@ -401,7 +426,8 @@ export const MemberPortalView: React.FC<MemberPortalViewProps> = ({
                       </button>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

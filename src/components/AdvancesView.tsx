@@ -3,6 +3,7 @@ import { Edit2, Plus, Trash2 } from 'lucide-react';
 import {
   computeMemberFinancialSummary,
   formatCurrency,
+  getStandardWorkHours,
   todayISO,
 } from '../lib/accounting';
 import {
@@ -14,6 +15,7 @@ import type {
   AdvanceCategory,
   AdvanceTransaction,
   AdvanceTransactionType,
+  AppSettings,
   AttendanceRecord,
   Language,
   Member,
@@ -30,6 +32,7 @@ interface AdvancesViewProps {
   overtime: OvertimeRecord[];
   advances: AdvanceTransaction[];
   payments: PaymentTransaction[];
+  settings: AppSettings | null;
   onToast: (msg: string, type?: 'success' | 'error') => void;
 }
 
@@ -40,9 +43,11 @@ export const AdvancesView: React.FC<AdvancesViewProps> = ({
   overtime,
   advances,
   payments,
+  settings,
   onToast,
 }) => {
   const t = TRANSLATIONS[lang];
+  const stdHours = getStandardWorkHours(settings?.standardWorkHours);
   const [filterMember, setFilterMember] = useState('all');
   const [filterCategory, setFilterCategory] = useState<'all' | AdvanceCategory>('all');
   const [modalOpen, setModalOpen] = useState(false);
@@ -63,8 +68,19 @@ export const AdvancesView: React.FC<AdvancesViewProps> = ({
   const memberMap = useMemo(() => new Map(members.map((m) => [m.memberId, m])), [members]);
 
   const memberBalances = useMemo(
-    () => members.map((m) => computeMemberFinancialSummary(m, attendance, overtime, advances, payments)),
-    [members, attendance, overtime, advances, payments]
+    () =>
+      members.map((m) =>
+        computeMemberFinancialSummary(
+          m,
+          attendance,
+          overtime,
+          advances,
+          payments,
+          undefined,
+          stdHours
+        )
+      ),
+    [members, attendance, overtime, advances, payments, stdHours]
   );
 
   const filteredAdvances = useMemo(() => {

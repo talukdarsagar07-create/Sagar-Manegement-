@@ -49326,6 +49326,50 @@ var ShieldCheck = createLucideIcon("shield-check", [["path", {
 * This source code is licensed under the ISC license.
 * See the LICENSE file in the root directory of this source tree.
 */
+var SlidersHorizontal = createLucideIcon("sliders-horizontal", [
+	["path", {
+		d: "M10 5H3",
+		key: "1qgfaw"
+	}],
+	["path", {
+		d: "M12 19H3",
+		key: "yhmn1j"
+	}],
+	["path", {
+		d: "M14 3v4",
+		key: "1sua03"
+	}],
+	["path", {
+		d: "M16 17v4",
+		key: "1q0r14"
+	}],
+	["path", {
+		d: "M21 12h-9",
+		key: "1o4lsq"
+	}],
+	["path", {
+		d: "M21 19h-5",
+		key: "1rlt1p"
+	}],
+	["path", {
+		d: "M21 5h-7",
+		key: "1oszz2"
+	}],
+	["path", {
+		d: "M8 10v4",
+		key: "tgpxqk"
+	}],
+	["path", {
+		d: "M8 12H3",
+		key: "a7s4jb"
+	}]
+]);
+/**
+* @license lucide-react v0.546.0 - ISC
+*
+* This source code is licensed under the ISC license.
+* See the LICENSE file in the root directory of this source tree.
+*/
 var Smartphone = createLucideIcon("smartphone", [["rect", {
 	width: "14",
 	height: "20",
@@ -49660,18 +49704,74 @@ function resolveBalanceDirection(rawNetBalance) {
 	if (rounded < -.01) return "MEMBER OWES YOU";
 	return "ALL SETTLED";
 }
-function computeMemberFinancialSummary(member, allAttendance, allOvertime, allAdvances, allPayments, dateRange) {
+function getBalanceVisuals(direction) {
+	if (direction === "YOU OWE MEMBER") return {
+		amountTextClass: "text-emerald-600 dark:text-emerald-400",
+		badgeClass: "border-emerald-200 bg-emerald-100 text-emerald-800 dark:border-emerald-800/70 dark:bg-emerald-950/60 dark:text-emerald-300",
+		bannerClass: "border-emerald-200 bg-emerald-50 dark:border-emerald-900/50 dark:bg-emerald-950/30",
+		dotClass: "bg-emerald-600 dark:bg-emerald-400"
+	};
+	if (direction === "MEMBER OWES YOU") return {
+		amountTextClass: "text-red-600 dark:text-red-400",
+		badgeClass: "border-red-200 bg-red-100 text-red-800 dark:border-red-800/70 dark:bg-red-950/60 dark:text-red-300",
+		bannerClass: "border-red-200 bg-red-50 dark:border-red-900/50 dark:bg-red-950/30",
+		dotClass: "bg-red-600 dark:bg-red-400"
+	};
+	return {
+		amountTextClass: "text-slate-600 dark:text-slate-300",
+		badgeClass: "border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300",
+		bannerClass: "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900",
+		dotClass: "bg-slate-500"
+	};
+}
+function getStandardWorkHours(standardWorkHours) {
+	const num = Number(standardWorkHours);
+	return Number.isFinite(num) && num > 0 ? num : 8;
+}
+function formatHoursShort(hours) {
+	const rounded = Math.round(safeNumber(hours, 0) * 100) / 100;
+	return Number.isInteger(rounded) ? String(rounded) : String(rounded);
+}
+function getAttendanceDayFactor(record, standardWorkHours = 8) {
+	if (!record || record.status !== "P") return 0;
+	const std = getStandardWorkHours(standardWorkHours);
+	if (record.workingHours === void 0 || record.workingHours === null) return 1;
+	const hrs = safeNumber(record.workingHours, std);
+	if (hrs <= 0) return 0;
+	if (hrs >= std) return 1;
+	return hrs / std;
+}
+function isPartialAttendance(record, standardWorkHours = 8) {
+	if (!record || record.status !== "P") return false;
+	const std = getStandardWorkHours(standardWorkHours);
+	if (record.workingHours === void 0 || record.workingHours === null) return false;
+	const hrs = safeNumber(record.workingHours, std);
+	return hrs > 0 && hrs < std;
+}
+function getAttendanceCode(record, standardWorkHours = 8) {
+	if (!record) return "·";
+	if (record.status === "A") return "A";
+	const std = getStandardWorkHours(standardWorkHours);
+	if (record.workingHours === void 0 || record.workingHours === null) return "P";
+	const hrs = safeNumber(record.workingHours, std);
+	if (hrs > 0 && hrs < std) return `P${formatHoursShort(hrs)}`;
+	if (hrs <= 0) return "A";
+	return "P";
+}
+function computeMemberFinancialSummary(member, allAttendance, allOvertime, allAdvances, allPayments, dateRange, standardWorkHours = 8) {
+	const stdHours = getStandardWorkHours(standardWorkHours);
 	const hasValidRange = Boolean(dateRange?.startDate) && Boolean(dateRange?.endDate) && dateRange.startDate <= dateRange.endDate;
 	const inRange = (date) => !hasValidRange || date >= dateRange.startDate && date <= dateRange.endDate;
 	const memberAtt = allAttendance.filter((a) => a.memberId === member.memberId && inRange(a.date));
 	const memberOt = allOvertime.filter((o) => o.memberId === member.memberId && inRange(o.date));
 	const memberAdv = allAdvances.filter((a) => a.memberId === member.memberId && inRange(a.date));
 	const memberPay = allPayments.filter((p) => p.memberId === member.memberId && p.verified && inRange(p.date));
-	const presentDays = memberAtt.filter((a) => a.status === "P").length;
-	const absentDays = memberAtt.filter((a) => a.status === "A").length;
-	const totalMarkedDays = presentDays + absentDays;
-	const attendancePercent = totalMarkedDays > 0 ? Math.round(presentDays / totalMarkedDays * 1e3) / 10 : 0;
-	const workingHours = Math.round(memberAtt.reduce((sum, a) => sum + (a.status === "P" ? safeNumber(a.workingHours, 0) : 0), 0) * 100) / 100;
+	const rawEquivalentPresentDays = memberAtt.reduce((sum, a) => sum + getAttendanceDayFactor(a, stdHours), 0);
+	const presentDays = Math.round(rawEquivalentPresentDays * 100) / 100;
+	const absentDays = memberAtt.filter((a) => a.status === "A" || a.status === "P" && safeNumber(a.workingHours, stdHours) <= 0).length;
+	const totalMarkedDays = memberAtt.filter((a) => a.status === "P" || a.status === "A").length;
+	const attendancePercent = totalMarkedDays > 0 ? Math.min(100, Math.round(rawEquivalentPresentDays / totalMarkedDays * 1e3) / 10) : 0;
+	const workingHours = Math.round(memberAtt.reduce((sum, a) => sum + (a.status === "P" ? safeNumber(a.workingHours, stdHours) : 0), 0) * 100) / 100;
 	const otDatesFromRecords = new Set(memberOt.map((o) => o.date));
 	const extraAttOtHours = memberAtt.filter((a) => !otDatesFromRecords.has(a.date)).reduce((sum, a) => sum + safeNumber(a.otHours, 0), 0);
 	const memberOtRate = safeNumber(member.otRate, 0);
@@ -49683,7 +49783,7 @@ function computeMemberFinancialSummary(member, allAttendance, allOvertime, allAd
 	}, 0);
 	const extraAttOtPay = extraAttOtHours * memberOtRate;
 	const totalOtEarned = Math.round((recordOtPay + extraAttOtPay) * 100) / 100;
-	const totalSalaryEarned = Math.round(presentDays * memberDailyRate * 100) / 100;
+	const totalSalaryEarned = Math.round(rawEquivalentPresentDays * memberDailyRate * 100) / 100;
 	const grossEarned = Math.round((totalSalaryEarned + totalOtEarned) * 100) / 100;
 	const normalAdvanceGiven = memberAdv.filter((a) => a.category === "NORMAL" && a.transactionType === "GIVEN").reduce((sum, a) => sum + safeNumber(a.amount, 0), 0);
 	const normalAdvanceRepaid = memberAdv.filter((a) => a.category === "NORMAL" && a.transactionType === "REPAYMENT").reduce((sum, a) => sum + safeNumber(a.amount, 0), 0);
@@ -53055,6 +53155,14 @@ async function saveOvertimeRecord(input) {
 		handleFirestoreError(err, OperationType.WRITE, path);
 	}
 }
+async function deleteOvertimeRecord(record) {
+	try {
+		await deleteDoc(doc(db, "overtimeRecords", record.recordId));
+		await logActivity("DELETE_OT", "overtimeRecords", record.recordId, `Deleted OT on ${record.date}`);
+	} catch (err) {
+		handleFirestoreError(err, OperationType.DELETE, `overtimeRecords/${record.recordId}`);
+	}
+}
 async function saveAdvanceTransaction(input) {
 	const user = auth.currentUser;
 	if (!user) throw new Error("Admin authentication required.");
@@ -53474,10 +53582,19 @@ var require_react_jsx_runtime_production = /* @__PURE__ */ __commonJSMin(((expor
 	exports.jsx = jsxProd;
 	exports.jsxs = jsxProd;
 }));
-// src/components/AccountingMessagesView.tsx
+// src/components/BalanceStatusBadge.tsx
 var import_jsx_runtime = (/* @__PURE__ */ __commonJSMin(((exports, module) => {
 	module.exports = require_react_jsx_runtime_production();
 })))();
+var BalanceStatusBadge = ({ direction, lang, isMemberView = false, className = "" }) => {
+	const visuals = getBalanceVisuals(direction);
+	const label = translateDirection(direction, lang, isMemberView);
+	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
+		className: `inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[10px] font-bold tracking-wide whitespace-nowrap ${visuals.badgeClass} ${className}`,
+		children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: `h-1.5 w-1.5 rounded-full shrink-0 ${visuals.dotClass}` }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: label })]
+	});
+};
+// src/components/AccountingMessagesView.tsx
 var TEMPLATES = [
 	{
 		id: "attendance",
@@ -53511,12 +53628,14 @@ var AccountingMessagesView = ({ lang, members, attendance, overtime, advances, p
 	const [msgLang, setMsgLang] = (0, import_react.useState)(lang);
 	const [customMessage, setCustomMessage] = (0, import_react.useState)("");
 	const [sendingSms, setSendingSms] = (0, import_react.useState)(false);
-	const summaries = (0, import_react.useMemo)(() => members.map((m) => computeMemberFinancialSummary(m, attendance, overtime, advances, payments)), [
+	const stdHours = getStandardWorkHours(settings?.standardWorkHours);
+	const summaries = (0, import_react.useMemo)(() => members.map((m) => computeMemberFinancialSummary(m, attendance, overtime, advances, payments, void 0, stdHours)), [
 		members,
 		attendance,
 		overtime,
 		advances,
-		payments
+		payments,
+		stdHours
 	]);
 	const selectedSummary = (0, import_react.useMemo)(() => summaries.find((s) => s.member.memberId === selectedMemberId) || summaries[0] || null, [summaries, selectedMemberId]);
 	(0, import_react.useEffect)(() => {
@@ -53683,64 +53802,70 @@ var AccountingMessagesView = ({ lang, members, attendance, overtime, advances, p
 							] })
 						}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("tbody", {
 							className: "divide-y divide-slate-100 dark:divide-slate-800",
-							children: summaries.map((s) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("tr", {
-								onClick: () => setSelectedMemberId(s.member.memberId),
-								className: `cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/40 ${selectedSummary?.member.memberId === s.member.memberId ? "bg-slate-50 dark:bg-slate-800/40" : ""}`,
-								children: [
-									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("td", {
-										className: "px-4 py-3",
-										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-											className: "font-semibold text-slate-900 dark:text-white",
-											children: s.member.fullName
-										}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-											className: "text-[11px] text-slate-500",
-											children: s.member.memberCode
-										})]
-									}),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
-										className: "px-3 py-3 text-right font-mono tabular-nums",
-										children: formatCurrency(s.totalSalaryEarned)
-									}),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
-										className: "px-3 py-3 text-right font-mono tabular-nums",
-										children: formatCurrency(s.totalOtEarned)
-									}),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
-										className: "px-3 py-3 text-right font-mono tabular-nums text-amber-600",
-										children: formatCurrency(s.normalAdvanceNet)
-									}),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
-										className: "px-3 py-3 text-right font-mono tabular-nums text-amber-600",
-										children: formatCurrency(s.cookingAdvanceNet)
-									}),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
-										className: "px-3 py-3 text-right font-mono font-semibold tabular-nums text-amber-700",
-										children: formatCurrency(s.totalAdvanceOutstanding)
-									}),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
-										className: "px-3 py-3 text-right font-mono tabular-nums",
-										children: formatCurrency(s.salaryPaymentsGiven)
-									}),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
-										className: "px-3 py-3 text-right font-mono tabular-nums",
-										children: formatCurrency(s.salaryPaymentsReceived)
-									}),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
-										className: "px-3 py-3 text-right font-mono tabular-nums",
-										children: formatCurrency(s.previousBalance)
-									}),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("td", {
-										className: "px-4 py-3 text-right",
-										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-											className: `font-mono font-bold tabular-nums ${s.balanceDirection === "YOU OWE MEMBER" ? "text-emerald-600" : s.balanceDirection === "MEMBER OWES YOU" ? "text-red-600" : "text-slate-500"}`,
-											children: formatCurrency(s.absBalance)
-										}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-											className: "text-[10px] font-semibold text-slate-500",
-											children: translateDirection(s.balanceDirection, lang)
-										})]
-									})
-								]
-							}, s.member.memberId))
+							children: summaries.map((s) => {
+								const balVisual = getBalanceVisuals(s.balanceDirection);
+								return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("tr", {
+									onClick: () => setSelectedMemberId(s.member.memberId),
+									className: `cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/40 ${selectedSummary?.member.memberId === s.member.memberId ? "bg-slate-50 dark:bg-slate-800/40" : ""}`,
+									children: [
+										/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("td", {
+											className: "px-4 py-3",
+											children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+												className: "font-semibold text-slate-900 dark:text-white",
+												children: s.member.fullName
+											}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+												className: "text-[11px] text-slate-500",
+												children: s.member.memberCode
+											})]
+										}),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
+											className: "px-3 py-3 text-right font-mono tabular-nums",
+											children: formatCurrency(s.totalSalaryEarned)
+										}),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
+											className: "px-3 py-3 text-right font-mono tabular-nums",
+											children: formatCurrency(s.totalOtEarned)
+										}),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
+											className: "px-3 py-3 text-right font-mono tabular-nums text-amber-600",
+											children: formatCurrency(s.normalAdvanceNet)
+										}),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
+											className: "px-3 py-3 text-right font-mono tabular-nums text-amber-600",
+											children: formatCurrency(s.cookingAdvanceNet)
+										}),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
+											className: "px-3 py-3 text-right font-mono font-semibold tabular-nums text-amber-700",
+											children: formatCurrency(s.totalAdvanceOutstanding)
+										}),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
+											className: "px-3 py-3 text-right font-mono tabular-nums",
+											children: formatCurrency(s.salaryPaymentsGiven)
+										}),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
+											className: "px-3 py-3 text-right font-mono tabular-nums",
+											children: formatCurrency(s.salaryPaymentsReceived)
+										}),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
+											className: "px-3 py-3 text-right font-mono tabular-nums",
+											children: formatCurrency(s.previousBalance)
+										}),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("td", {
+											className: "px-4 py-3 text-right",
+											children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+												className: `font-mono font-bold tabular-nums ${balVisual.amountTextClass}`,
+												children: formatCurrency(s.absBalance)
+											}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+												className: "mt-1 flex justify-end",
+												children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(BalanceStatusBadge, {
+													direction: s.balanceDirection,
+													lang
+												})
+											})]
+										})
+									]
+								}, s.member.memberId);
+							})
 						})]
 					})
 				})]
@@ -53750,15 +53875,26 @@ var AccountingMessagesView = ({ lang, members, attendance, overtime, advances, p
 				children: [
 					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 						className: "flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4 dark:border-slate-800",
-						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("h3", {
-							className: "text-base font-bold text-slate-900 dark:text-white",
-							children: ["WhatsApp & SMS Dispatch — ", selectedSummary.member.fullName]
+						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+							className: "flex flex-wrap items-center gap-2",
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("h3", {
+								className: "text-base font-bold text-slate-900 dark:text-white",
+								children: ["WhatsApp & SMS Dispatch — ", selectedSummary.member.fullName]
+							}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)(BalanceStatusBadge, {
+								direction: selectedSummary.balanceDirection,
+								lang
+							})]
 						}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
 							className: "text-xs text-slate-500",
 							children: [
 								"Mobile: ",
 								selectedSummary.member.phone,
-								" · Select bilingual template below"
+								" · Closing Balance:",
+								" ",
+								/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+									className: `font-mono font-bold ${getBalanceVisuals(selectedSummary.balanceDirection).amountTextClass}`,
+									children: formatCurrency(selectedSummary.absBalance)
+								})
 							]
 						})] }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 							className: "flex items-center gap-2",
@@ -53836,7 +53972,8 @@ var AccountingMessagesView = ({ lang, members, attendance, overtime, advances, p
 	});
 };
 // src/components/AdminDashboardView.tsx
-var AdminDashboardView = ({ lang, members, attendance, overtime, advances, payments, onNavigate }) => {
+var AdminDashboardView = ({ lang, members, attendance, overtime, advances, payments, settings, onNavigate }) => {
+	const stdHours = getStandardWorkHours(settings?.standardWorkHours);
 	const t = TRANSLATIONS[lang];
 	const today = todayISO();
 	const weekRange = (0, import_react.useMemo)(() => getWeekRange(today), [today]);
@@ -53858,12 +53995,12 @@ var AdminDashboardView = ({ lang, members, attendance, overtime, advances, payme
 			const weekSum = computeMemberFinancialSummary(m, attendance, overtime, advances, payments, {
 				startDate: weekRange.startDate,
 				endDate: weekRange.endDate
-			});
+			}, stdHours);
 			const monthSum = computeMemberFinancialSummary(m, attendance, overtime, advances, payments, {
 				startDate: monthRange.startDate,
 				endDate: monthRange.endDate
-			});
-			const lifeSum = computeMemberFinancialSummary(m, attendance, overtime, advances, payments);
+			}, stdHours);
+			const lifeSum = computeMemberFinancialSummary(m, attendance, overtime, advances, payments, void 0, stdHours);
 			weeklySalaryTotal += weekSum.grossEarned;
 			monthlySalaryTotal += monthSum.grossEarned;
 			totalOtEarned += lifeSum.totalOtEarned;
@@ -53904,7 +54041,8 @@ var AdminDashboardView = ({ lang, members, attendance, overtime, advances, payme
 		payments,
 		today,
 		weekRange,
-		monthRange
+		monthRange,
+		stdHours
 	]);
 	const maxChartDay = Math.max(1, ...stats.weeklyChart.map((d) => d.present + d.absent));
 	const maxFinancialBar = Math.max(1, stats.monthlySalaryTotal, stats.totalOtEarned, stats.totalAdvanceOutstanding, stats.totalPayments);
@@ -54239,47 +54377,53 @@ var AdminDashboardView = ({ lang, members, attendance, overtime, advances, payme
 							] })
 						}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("tbody", {
 							className: "divide-y divide-slate-100 dark:divide-slate-800",
-							children: stats.memberSummaries.slice(0, 8).map((s) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("tr", {
-								className: "hover:bg-slate-50/70 dark:hover:bg-slate-800/40",
-								children: [
-									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("td", {
-										className: "px-5 py-3",
-										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-											className: "font-semibold text-slate-900 dark:text-white",
-											children: s.member.fullName
-										}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
-											className: "text-xs text-slate-500",
-											children: [
-												s.member.memberCode,
-												" · ",
-												s.member.phone
-											]
-										})]
-									}),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("td", {
-										className: "px-4 py-3 text-right font-mono tabular-nums text-slate-700 dark:text-slate-300",
-										children: [s.presentDays, "d"]
-									}),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
-										className: "px-4 py-3 text-right font-mono tabular-nums text-slate-700 dark:text-slate-300",
-										children: formatCurrency(s.grossEarned)
-									}),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
-										className: "px-4 py-3 text-right font-mono tabular-nums text-amber-600 dark:text-amber-400",
-										children: formatCurrency(s.totalAdvanceOutstanding)
-									}),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("td", {
-										className: "px-5 py-3 text-right",
-										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-											className: `font-mono font-bold tabular-nums ${s.balanceDirection === "YOU OWE MEMBER" ? "text-emerald-600 dark:text-emerald-400" : s.balanceDirection === "MEMBER OWES YOU" ? "text-red-600 dark:text-red-400" : "text-slate-500"}`,
-											children: formatCurrency(s.absBalance)
-										}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-											className: "text-[11px] font-medium text-slate-500",
-											children: s.balanceDirection
-										})]
-									})
-								]
-							}, s.member.memberId))
+							children: stats.memberSummaries.slice(0, 8).map((s) => {
+								const balVisual = getBalanceVisuals(s.balanceDirection);
+								return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("tr", {
+									className: "hover:bg-slate-50/70 dark:hover:bg-slate-800/40",
+									children: [
+										/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("td", {
+											className: "px-5 py-3",
+											children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+												className: "font-semibold text-slate-900 dark:text-white",
+												children: s.member.fullName
+											}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+												className: "text-xs text-slate-500",
+												children: [
+													s.member.memberCode,
+													" · ",
+													s.member.phone
+												]
+											})]
+										}),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("td", {
+											className: "px-4 py-3 text-right font-mono tabular-nums text-slate-700 dark:text-slate-300",
+											children: [s.presentDays, "d"]
+										}),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
+											className: "px-4 py-3 text-right font-mono tabular-nums text-slate-700 dark:text-slate-300",
+											children: formatCurrency(s.grossEarned)
+										}),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
+											className: "px-4 py-3 text-right font-mono tabular-nums text-amber-600 dark:text-amber-400",
+											children: formatCurrency(s.totalAdvanceOutstanding)
+										}),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("td", {
+											className: "px-5 py-3 text-right",
+											children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+												className: `font-mono font-bold tabular-nums ${balVisual.amountTextClass}`,
+												children: formatCurrency(s.absBalance)
+											}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+												className: "mt-1 flex justify-end",
+												children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(BalanceStatusBadge, {
+													direction: s.balanceDirection,
+													lang
+												})
+											})]
+										})
+									]
+								}, s.member.memberId);
+							})
 						})]
 					})
 				})]
@@ -54326,8 +54470,9 @@ var ConfirmDialog = ({ open, title, message, confirmLabel = "Delete", cancelLabe
 	});
 };
 // src/components/AdvancesView.tsx
-var AdvancesView = ({ lang, members, attendance, overtime, advances, payments, onToast }) => {
+var AdvancesView = ({ lang, members, attendance, overtime, advances, payments, settings, onToast }) => {
 	const t = TRANSLATIONS[lang];
+	const stdHours = getStandardWorkHours(settings?.standardWorkHours);
 	const [filterMember, setFilterMember] = (0, import_react.useState)("all");
 	const [filterCategory, setFilterCategory] = (0, import_react.useState)("all");
 	const [modalOpen, setModalOpen] = (0, import_react.useState)(false);
@@ -54343,12 +54488,13 @@ var AdvancesView = ({ lang, members, attendance, overtime, advances, payments, o
 	const [reference, setReference] = (0, import_react.useState)("");
 	const [notes, setNotes] = (0, import_react.useState)("");
 	const memberMap = (0, import_react.useMemo)(() => new Map(members.map((m) => [m.memberId, m])), [members]);
-	const memberBalances = (0, import_react.useMemo)(() => members.map((m) => computeMemberFinancialSummary(m, attendance, overtime, advances, payments)), [
+	const memberBalances = (0, import_react.useMemo)(() => members.map((m) => computeMemberFinancialSummary(m, attendance, overtime, advances, payments, void 0, stdHours)), [
 		members,
 		attendance,
 		overtime,
 		advances,
-		payments
+		payments,
+		stdHours
 	]);
 	const filteredAdvances = (0, import_react.useMemo)(() => {
 		return advances.filter((a) => {
@@ -54823,15 +54969,29 @@ var AttendanceOvertimeView = ({ lang, members, attendance, overtime, settings, o
 	const t = TRANSLATIONS[lang];
 	const today = todayISO();
 	const [mode, setMode] = (0, import_react.useState)("weekly");
+	const [tapAction, setTapAction] = (0, import_react.useState)("toggle");
 	const [anchorDate, setAnchorDate] = (0, import_react.useState)(today);
 	const [selectedMonth, setSelectedMonth] = (0, import_react.useState)(today.slice(0, 7));
 	const [bulkDate, setBulkDate] = (0, import_react.useState)(today);
 	const [savingKey, setSavingKey] = (0, import_react.useState)(null);
-	const [otTarget, setOtTarget] = (0, import_react.useState)(null);
-	const [otHours, setOtHours] = (0, import_react.useState)("2");
-	const [otRate, setOtRate] = (0, import_react.useState)("80");
-	const [otNotes, setOtNotes] = (0, import_react.useState)("");
-	const standardHours = settings?.standardWorkHours || 8;
+	const [cellTarget, setCellTarget] = (0, import_react.useState)(null);
+	const [editStatus, setEditStatus] = (0, import_react.useState)("P");
+	const [editWorkHours, setEditWorkHours] = (0, import_react.useState)("8");
+	const [editOtHours, setEditOtHours] = (0, import_react.useState)("0");
+	const [editOtRate, setEditOtRate] = (0, import_react.useState)("80");
+	const [editNotes, setEditNotes] = (0, import_react.useState)("");
+	const standardHours = getStandardWorkHours(settings?.standardWorkHours);
+	const partialHourPresets = (0, import_react.useMemo)(() => {
+		const base = [
+			1,
+			2,
+			3,
+			4,
+			6
+		].filter((h) => h < standardHours);
+		if (base.length === 0 && standardHours > 1) return [Math.max(1, Math.floor(standardHours / 2))];
+		return base;
+	}, [standardHours]);
 	const activeRange = (0, import_react.useMemo)(() => {
 		if (mode === "weekly") return getWeekRange(anchorDate);
 		const [yStr, mStr] = selectedMonth.split("-");
@@ -54856,7 +55016,28 @@ var AttendanceOvertimeView = ({ lang, members, attendance, overtime, settings, o
 		});
 		return map;
 	}, [overtime]);
+	const openCellEditor = (member, date) => {
+		const key = `${member.memberId}_${date}`;
+		const existingAtt = attendanceMap.get(key);
+		const existingOt = otMap.get(key);
+		const status = existingAtt?.status === "A" ? "A" : "P";
+		const workHrs = existingAtt?.status === "A" ? 0 : existingAtt ? safeNumber(existingAtt.workingHours, standardHours) : standardHours;
+		const otHrs = existingOt ? safeNumber(existingOt.hours, 0) : safeNumber(existingAtt?.otHours, 0);
+		setCellTarget({
+			member,
+			date
+		});
+		setEditStatus(status);
+		setEditWorkHours(String(workHrs));
+		setEditOtHours(String(otHrs));
+		setEditOtRate(String(existingOt?.rate ?? member.otRate ?? settings?.defaultOtRate ?? 80));
+		setEditNotes(existingOt?.notes || existingAtt?.notes || "");
+	};
 	const toggleCell = async (member, date) => {
+		if (tapAction === "hours") {
+			openCellEditor(member, date);
+			return;
+		}
 		const key = `${member.memberId}_${date}`;
 		const existing = attendanceMap.get(key);
 		const nextStatus = existing?.status === "P" ? "A" : "P";
@@ -54891,44 +55072,71 @@ var AttendanceOvertimeView = ({ lang, members, attendance, overtime, settings, o
 					existing
 				});
 			}));
-			onToast(`Marked all ${activeMembers.length} active workers as ${status === "P" ? "Present" : "Absent"} for ${bulkDate}.`);
+			onToast(`Marked all ${activeMembers.length} active workers as ${status === "P" ? `Present (${standardHours}h)` : "Absent"} for ${bulkDate}.`);
 		} catch (err) {
 			onToast(err instanceof Error ? err.message : "Bulk update failed", "error");
 		} finally {
 			setSavingKey(null);
 		}
 	};
-	const openOtModal = (member, date) => {
-		const existingOt = otMap.get(`${member.memberId}_${date}`);
-		setOtTarget({
-			member,
-			date
-		});
-		setOtHours(String(existingOt?.hours ?? 2));
-		setOtRate(String(existingOt?.rate ?? member.otRate ?? settings?.defaultOtRate ?? 80));
-		setOtNotes(existingOt?.notes || "");
-	};
-	const handleSaveOt = async (e) => {
+	const handleSaveCellEntry = async (e) => {
 		e.preventDefault();
-		if (!otTarget) return;
-		setSavingKey("ot");
+		if (!cellTarget) return;
+		const parsedWork = Math.max(0, Math.min(24, Number(editWorkHours) || 0));
+		const parsedOt = Math.max(0, Math.min(24, Number(editOtHours) || 0));
+		const parsedOtRate = Math.max(0, Number(editOtRate) || 0);
+		const finalStatus = editStatus === "A" || parsedWork <= 0 ? "A" : "P";
+		const finalWorkHours = finalStatus === "P" ? parsedWork : 0;
+		const key = `${cellTarget.member.memberId}_${cellTarget.date}`;
+		const existingAtt = attendanceMap.get(key);
+		const existingOt = otMap.get(key);
+		setSavingKey("cell_modal");
 		try {
-			await saveOvertimeRecord({
-				member: otTarget.member,
-				date: otTarget.date,
-				hours: Number(otHours) || 0,
-				rate: Number(otRate) || 0,
-				notes: otNotes,
-				existingId: otMap.get(`${otTarget.member.memberId}_${otTarget.date}`)?.recordId
+			await upsertAttendanceRecord({
+				member: cellTarget.member,
+				date: cellTarget.date,
+				status: finalStatus,
+				workingHours: finalWorkHours,
+				otHours: parsedOt,
+				notes: editNotes,
+				existing: existingAtt
 			});
-			onToast(`Overtime saved for ${otTarget.member.fullName}.`);
-			setOtTarget(null);
+			if (parsedOt > 0) await saveOvertimeRecord({
+				member: cellTarget.member,
+				date: cellTarget.date,
+				hours: parsedOt,
+				rate: parsedOtRate,
+				notes: editNotes,
+				existingId: existingOt?.recordId
+			});
+			else if (existingOt) await deleteOvertimeRecord(existingOt);
+			const code = getAttendanceCode({
+				status: finalStatus,
+				workingHours: finalWorkHours
+			}, standardHours);
+			onToast(`Saved ${cellTarget.member.fullName} (${cellTarget.date}): ${code}${parsedOt > 0 ? ` + ${formatHoursShort(parsedOt)}h OT` : ""}`);
+			setCellTarget(null);
 		} catch (err) {
-			onToast(err instanceof Error ? err.message : "Failed to save overtime", "error");
+			onToast(err instanceof Error ? err.message : "Failed to save attendance hours", "error");
 		} finally {
 			setSavingKey(null);
 		}
 	};
+	const modalWorkNum = Math.max(0, Math.min(24, Number(editWorkHours) || 0));
+	const modalOtNum = Math.max(0, Math.min(24, Number(editOtHours) || 0));
+	const modalOtRateNum = Math.max(0, Number(editOtRate) || 0);
+	const modalFinalStatus = editStatus === "A" || modalWorkNum <= 0 ? "A" : "P";
+	const modalPreviewCode = getAttendanceCode({
+		status: modalFinalStatus,
+		workingHours: modalFinalStatus === "P" ? modalWorkNum : 0
+	}, standardHours);
+	const modalDayFactor = getAttendanceDayFactor({
+		status: modalFinalStatus,
+		workingHours: modalFinalStatus === "P" ? modalWorkNum : 0
+	}, standardHours);
+	const modalBaseWage = cellTarget ? Math.round(modalDayFactor * safeNumber(cellTarget.member.dailySalaryRate) * 100) / 100 : 0;
+	const modalOtWage = Math.round(modalOtNum * modalOtRateNum * 100) / 100;
+	const modalTotalWage = Math.round((modalBaseWage + modalOtWage) * 100) / 100;
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 		className: "space-y-6",
 		children: [
@@ -54942,7 +55150,7 @@ var AttendanceOvertimeView = ({ lang, members, attendance, overtime, settings, o
 					children: [
 						"Standard shift: ",
 						standardHours,
-						"h/day · Period: ",
+						"h/day · Partial hours show as P1, P2, etc. · Period: ",
 						activeRange.startDate,
 						" to ",
 						activeRange.endDate,
@@ -54981,10 +55189,10 @@ var AttendanceOvertimeView = ({ lang, members, attendance, overtime, settings, o
 			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 				className: "flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900",
 				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-					className: "flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300",
+					className: "flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300",
 					children: [
 						/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Calendar, { className: "h-4 w-4 text-[#0B1F3A] dark:text-emerald-400" }),
-						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Quick Bulk Mark for Date:" }),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Quick Bulk Date:" }),
 						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
 							type: "date",
 							value: bulkDate,
@@ -54993,21 +55201,77 @@ var AttendanceOvertimeView = ({ lang, members, attendance, overtime, settings, o
 						})
 					]
 				}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-					className: "flex items-center gap-2",
-					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
-						type: "button",
-						disabled: savingKey === "bulk",
-						onClick: () => handleBulkMark("P"),
-						className: "inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50 min-h-[38px]",
-						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(CircleCheck, { className: "h-3.5 w-3.5" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Mark All Present (P)" })]
-					}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
-						type: "button",
-						disabled: savingKey === "bulk",
-						onClick: () => handleBulkMark("A"),
-						className: "inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3.5 py-2 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300 min-h-[38px]",
-						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(CircleX, { className: "h-3.5 w-3.5" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Mark All Absent (A)" })]
-					})]
+					className: "flex flex-wrap items-center gap-2",
+					children: [
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+							className: "flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1 dark:border-slate-700 dark:bg-slate-800",
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+								type: "button",
+								onClick: () => setTapAction("toggle"),
+								className: `rounded-md px-2.5 py-1.5 text-[11px] font-semibold transition ${tapAction === "toggle" ? "bg-[#0B1F3A] text-white" : "text-slate-600 dark:text-slate-300"}`,
+								children: "Tap: Quick P/A"
+							}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+								type: "button",
+								onClick: () => setTapAction("hours"),
+								className: `inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-[11px] font-semibold transition ${tapAction === "hours" ? "bg-sky-600 text-white" : "text-slate-600 dark:text-slate-300"}`,
+								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(SlidersHorizontal, { className: "h-3 w-3" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Tap: Hours (P1, P2, OT)" })]
+							})]
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+							type: "button",
+							disabled: savingKey === "bulk",
+							onClick: () => handleBulkMark("P"),
+							className: "inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50 min-h-[38px]",
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(CircleCheck, { className: "h-3.5 w-3.5" }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+								"Mark All P (",
+								standardHours,
+								"h)"
+							] })]
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+							type: "button",
+							disabled: savingKey === "bulk",
+							onClick: () => handleBulkMark("A"),
+							className: "inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3.5 py-2 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300 min-h-[38px]",
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(CircleX, { className: "h-3.5 w-3.5" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Mark All A" })]
+						})
+					]
 				})]
+			}),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+				className: "flex flex-wrap items-center gap-3 text-[11px] text-slate-600 dark:text-slate-400",
+				children: [
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
+						className: "inline-flex items-center gap-1.5",
+						children: [
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+								className: "inline-flex h-5 w-6 items-center justify-center rounded bg-emerald-600 font-mono text-[10px] font-bold text-white",
+								children: "P"
+							}),
+							"Full Day (",
+							standardHours,
+							"h)"
+						]
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
+						className: "inline-flex items-center gap-1.5",
+						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+							className: "inline-flex h-5 w-7 items-center justify-center rounded bg-sky-600 font-mono text-[10px] font-bold text-white",
+							children: "P2"
+						}), "Partial Hours (Pro-rata Salary)"]
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
+						className: "inline-flex items-center gap-1.5",
+						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+							className: "inline-flex h-5 w-6 items-center justify-center rounded bg-red-100 font-mono text-[10px] font-bold text-red-700 dark:bg-red-950/60 dark:text-red-300",
+							children: "A"
+						}), "Absent (0h)"]
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+						className: "text-slate-400",
+						children: "· Switch to “Tap: Hours (P1, P2, OT)” or right-click any cell to enter custom work hours & overtime."
+					})
+				]
 			}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 				className: "rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900",
@@ -55022,19 +55286,19 @@ var AttendanceOvertimeView = ({ lang, members, attendance, overtime, settings, o
 							className: "border-b border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-300",
 							children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("tr", { children: [
 								/* @__PURE__ */ (0, import_jsx_runtime.jsx)("th", {
-									className: "sticky left-0 z-10 bg-slate-50 px-4 py-3 font-bold dark:bg-slate-900 min-w-[170px]",
+									className: "sticky left-0 z-10 bg-slate-50 px-4 py-3 font-bold dark:bg-slate-900 min-w-[180px]",
 									children: "Worker"
 								}),
 								activeRange.days.map((day) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("th", {
-									className: "px-1.5 py-3 text-center font-mono min-w-[44px]",
+									className: "px-1.5 py-3 text-center font-mono min-w-[46px]",
 									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { children: day.slice(8) }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 										className: "text-[10px] font-normal text-slate-400",
 										children: (/* @__PURE__ */ new Date(`${day}T00:00:00`)).toLocaleDateString("en-US", { weekday: "narrow" })
 									})]
 								}, day)),
 								/* @__PURE__ */ (0, import_jsx_runtime.jsx)("th", {
-									className: "px-3 py-3 text-right font-bold",
-									children: "P / A"
+									className: "px-3 py-3 text-right font-bold whitespace-nowrap",
+									children: "P (Eq) / A"
 								}),
 								/* @__PURE__ */ (0, import_jsx_runtime.jsx)("th", {
 									className: "px-3 py-3 text-right font-bold",
@@ -55052,14 +55316,21 @@ var AttendanceOvertimeView = ({ lang, members, attendance, overtime, settings, o
 						}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("tbody", {
 							className: "divide-y divide-slate-100 dark:divide-slate-800",
 							children: activeMembers.map((m) => {
-								let presentDays = 0;
+								let rawPresentDays = 0;
 								let absentDays = 0;
+								let markedDays = 0;
+								let totalWorkHours = 0;
 								let totalOtHours = 0;
 								let totalOtPay = 0;
 								activeRange.days.forEach((day) => {
 									const rec = attendanceMap.get(`${m.memberId}_${day}`);
-									if (rec?.status === "P") presentDays += 1;
-									if (rec?.status === "A") absentDays += 1;
+									if (rec) {
+										markedDays += 1;
+										const factor = getAttendanceDayFactor(rec, standardHours);
+										rawPresentDays += factor;
+										if (rec.status === "P") totalWorkHours += safeNumber(rec.workingHours, standardHours);
+										if (rec.status === "A" || rec.status === "P" && factor === 0) absentDays += 1;
+									}
 									const ot = otMap.get(`${m.memberId}_${day}`);
 									if (ot) {
 										totalOtHours += safeNumber(ot.hours);
@@ -55070,9 +55341,10 @@ var AttendanceOvertimeView = ({ lang, members, attendance, overtime, settings, o
 										totalOtPay += hrs * safeNumber(m.otRate);
 									}
 								});
-								const marked = presentDays + absentDays;
-								const pct = marked > 0 ? Math.round(presentDays / marked * 100) : 0;
-								const combined = presentDays * safeNumber(m.dailySalaryRate) + totalOtPay;
+								const presentEq = Math.round(rawPresentDays * 100) / 100;
+								const pct = markedDays > 0 ? Math.min(100, Math.round(rawPresentDays / markedDays * 100)) : 0;
+								const normalSalary = Math.round(rawPresentDays * safeNumber(m.dailySalaryRate) * 100) / 100;
+								const combined = Math.round((normalSalary + totalOtPay) * 100) / 100;
 								return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("tr", {
 									className: "hover:bg-slate-50/70 dark:hover:bg-slate-800/40",
 									children: [
@@ -55096,10 +55368,10 @@ var AttendanceOvertimeView = ({ lang, members, attendance, overtime, settings, o
 													})]
 												}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 													type: "button",
-													onClick: () => openOtModal(m, bulkDate),
-													title: "Log Overtime",
+													onClick: () => openCellEditor(m, bulkDate),
+													title: "Edit Work Hours (P1/P2) & Overtime",
 													className: "inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 shrink-0",
-													children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Clock, { className: "h-3 w-3 text-emerald-600" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "OT" })]
+													children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Clock, { className: "h-3 w-3 text-emerald-600" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Hrs/OT" })]
 												})]
 											})
 										}),
@@ -55107,34 +55379,44 @@ var AttendanceOvertimeView = ({ lang, members, attendance, overtime, settings, o
 											const key = `${m.memberId}_${day}`;
 											const rec = attendanceMap.get(key);
 											const ot = otMap.get(key);
-											const status = rec?.status;
+											const otHoursVal = ot ? safeNumber(ot.hours, 0) : safeNumber(rec?.otHours, 0);
+											const code = getAttendanceCode(rec, standardHours);
+											const partial = isPartialAttendance(rec, standardHours);
 											return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
 												className: "px-1 py-2 text-center",
 												children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 													type: "button",
 													disabled: savingKey === key,
 													onClick: () => toggleCell(m, day),
-													className: `relative inline-flex h-9 w-9 items-center justify-center rounded-lg font-mono text-xs font-bold transition ${status === "P" ? "bg-emerald-600 text-white hover:bg-emerald-700" : status === "A" ? "bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-950/60 dark:text-red-300" : "border border-slate-200 bg-slate-50 text-slate-400 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800"}`,
-													children: [status || "·", ot && ot.hours > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
+													onContextMenu: (e) => {
+														e.preventDefault();
+														openCellEditor(m, day);
+													},
+													title: `${m.fullName} (${day}): ${rec ? `${code} · ${safeNumber(rec.workingHours, standardHours)}h work` : "Unmarked"}${otHoursVal > 0 ? ` + ${otHoursVal}h OT` : ""}`,
+													className: `relative inline-flex h-9 min-w-[36px] px-1 items-center justify-center rounded-lg font-mono text-[11px] font-bold transition ${partial ? "bg-sky-600 text-white hover:bg-sky-700" : code === "P" ? "bg-emerald-600 text-white hover:bg-emerald-700" : code === "A" ? "bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-950/60 dark:text-red-300" : "border border-slate-200 bg-slate-50 text-slate-400 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800"}`,
+													children: [code, otHoursVal > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
 														className: "absolute -right-1 -top-1 rounded bg-[#0B1F3A] px-1 text-[9px] text-white",
-														children: ["+", ot.hours]
+														children: ["+", formatHoursShort(otHoursVal)]
 													})]
 												})
 											}, day);
 										}),
 										/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("td", {
 											className: "px-3 py-2 text-right font-mono tabular-nums whitespace-nowrap",
-											children: [
+											children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
 												/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
 													className: "font-bold text-emerald-600",
-													children: presentDays
+													children: presentEq
 												}),
 												" / ",
 												/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
 													className: "text-red-600",
 													children: absentDays
 												})
-											]
+											] }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+												className: "text-[10px] text-slate-400",
+												children: [formatHoursShort(totalWorkHours), "h work"]
+											})]
 										}),
 										/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("td", {
 											className: "px-3 py-2 text-right font-mono tabular-nums",
@@ -55142,7 +55424,7 @@ var AttendanceOvertimeView = ({ lang, members, attendance, overtime, settings, o
 										}),
 										/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("td", {
 											className: "px-3 py-2 text-right font-mono tabular-nums",
-											children: [totalOtHours, "h"]
+											children: [formatHoursShort(totalOtHours), "h"]
 										}),
 										/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
 											className: "px-4 py-2 text-right font-mono font-bold tabular-nums text-[#0B1F3A] dark:text-white whitespace-nowrap",
@@ -55155,87 +55437,233 @@ var AttendanceOvertimeView = ({ lang, members, attendance, overtime, settings, o
 					})
 				})
 			}),
-			otTarget && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-				className: "fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm",
+			cellTarget && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+				className: "fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm overflow-y-auto",
 				children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-					className: "w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-slate-800 dark:bg-slate-900",
-					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("h3", {
-						className: "font-display text-lg font-bold text-slate-900 dark:text-white",
-						children: ["Overtime Entry — ", otTarget.member.fullName]
-					}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("form", {
-						onSubmit: handleSaveOt,
-						className: "mt-4 space-y-4",
-						children: [
-							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("label", {
-								className: "block text-xs font-semibold text-slate-700 dark:text-slate-300",
-								children: "Date"
-							}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
-								type: "date",
-								required: true,
-								value: otTarget.date,
-								onChange: (e) => setOtTarget({
-									...otTarget,
-									date: e.target.value
+					className: "my-6 w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-slate-800 dark:bg-slate-900",
+					children: [
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("h3", {
+							className: "font-display text-lg font-bold text-slate-900 dark:text-white",
+							children: ["Hours & Overtime — ", cellTarget.member.fullName]
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+							className: "mt-0.5 text-xs text-slate-500 dark:text-slate-400",
+							children: [
+								"Daily Rate: ",
+								formatCurrency(cellTarget.member.dailySalaryRate),
+								" / ",
+								standardHours,
+								"h shift (",
+								formatCurrency(safeNumber(cellTarget.member.dailySalaryRate) / standardHours),
+								"/hr)"
+							]
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("form", {
+							onSubmit: handleSaveCellEntry,
+							className: "mt-4 space-y-4",
+							children: [
+								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("label", {
+									className: "block text-xs font-semibold text-slate-700 dark:text-slate-300",
+									children: "Date"
+								}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+									type: "date",
+									required: true,
+									value: cellTarget.date,
+									onChange: (e) => {
+										const nextDate = e.target.value || today;
+										openCellEditor(cellTarget.member, nextDate);
+									},
+									className: "mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+								})] }),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("label", {
+									className: "block text-xs font-semibold text-slate-700 dark:text-slate-300",
+									children: "Quick Select Attendance / Partial Hours"
+								}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+									className: "mt-1.5 flex flex-wrap gap-1.5",
+									children: [
+										/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+											type: "button",
+											onClick: () => {
+												setEditStatus("P");
+												setEditWorkHours(String(standardHours));
+											},
+											className: `rounded-lg px-3 py-1.5 text-xs font-bold transition ${editStatus === "P" && Number(editWorkHours) >= standardHours ? "bg-emerald-600 text-white" : "border border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"}`,
+											children: [
+												"Full P (",
+												standardHours,
+												"h)"
+											]
+										}),
+										partialHourPresets.map((hrs) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+											type: "button",
+											onClick: () => {
+												setEditStatus("P");
+												setEditWorkHours(String(hrs));
+											},
+											className: `rounded-lg px-2.5 py-1.5 font-mono text-xs font-bold transition ${editStatus === "P" && Number(editWorkHours) === hrs ? "bg-sky-600 text-white" : "border border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"}`,
+											children: [
+												"P",
+												hrs,
+												" (",
+												hrs,
+												"h)"
+											]
+										}, hrs)),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+											type: "button",
+											onClick: () => {
+												setEditStatus("A");
+												setEditWorkHours("0");
+											},
+											className: `rounded-lg px-3 py-1.5 text-xs font-bold transition ${editStatus === "A" || Number(editWorkHours) <= 0 ? "bg-red-600 text-white" : "border border-red-200 bg-red-50 text-red-700 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300"}`,
+											children: "Absent (A)"
+										})
+									]
+								})] }),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+									className: "grid grid-cols-3 gap-3",
+									children: [
+										/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("label", {
+											className: "block text-xs font-semibold text-slate-700 dark:text-slate-300",
+											children: "Work Hrs"
+										}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+											type: "number",
+											min: "0",
+											max: "24",
+											step: "0.5",
+											required: true,
+											value: editWorkHours,
+											onChange: (e) => {
+												const val = e.target.value;
+												setEditWorkHours(val);
+												setEditStatus((Number(val) || 0) > 0 ? "P" : "A");
+											},
+											className: "mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+										})] }),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("label", {
+											className: "block text-xs font-semibold text-slate-700 dark:text-slate-300",
+											children: "OT Hours"
+										}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+											type: "number",
+											min: "0",
+											max: "24",
+											step: "0.5",
+											required: true,
+											value: editOtHours,
+											onChange: (e) => setEditOtHours(e.target.value),
+											className: "mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+										})] }),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("label", {
+											className: "block text-xs font-semibold text-slate-700 dark:text-slate-300",
+											children: "OT ₹/hr"
+										}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+											type: "number",
+											min: "0",
+											step: "any",
+											required: true,
+											value: editOtRate,
+											onChange: (e) => setEditOtRate(e.target.value),
+											className: "mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+										})] })
+									]
 								}),
-								className: "mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-							})] }),
-							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-								className: "grid grid-cols-2 gap-3",
-								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("label", {
-									className: "block text-xs font-semibold text-slate-700 dark:text-slate-300",
-									children: "OT Hours"
-								}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
-									type: "number",
-									min: "0",
-									max: "24",
-									step: "0.5",
-									required: true,
-									value: otHours,
-									onChange: (e) => setOtHours(e.target.value),
-									className: "mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-								})] }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("label", {
-									className: "block text-xs font-semibold text-slate-700 dark:text-slate-300",
-									children: "OT Rate (₹/hr)"
-								}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
-									type: "number",
-									min: "0",
-									step: "any",
-									required: true,
-									value: otRate,
-									onChange: (e) => setOtRate(e.target.value),
-									className: "mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-								})] })]
-							}),
-							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-								className: "rounded-xl bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300",
-								children: ["OT Amount: ", formatCurrency((Number(otHours) || 0) * (Number(otRate) || 0))]
-							}),
-							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("label", {
-								className: "block text-xs font-semibold text-slate-700 dark:text-slate-300",
-								children: "Notes"
-							}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
-								type: "text",
-								value: otNotes,
-								onChange: (e) => setOtNotes(e.target.value),
-								placeholder: "Optional reason or task",
-								className: "mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-							})] }),
-							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-								className: "flex justify-end gap-2 pt-2",
-								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+								modalWorkNum > standardHours && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 									type: "button",
-									onClick: () => setOtTarget(null),
-									className: "rounded-lg border border-slate-200 px-4 py-2 text-xs font-medium dark:border-slate-700",
-									children: "Cancel"
-								}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
-									type: "submit",
-									disabled: savingKey === "ot",
-									className: "rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700",
-									children: "Save OT"
-								})]
-							})
-						]
-					})]
+									onClick: () => {
+										const extraOt = Math.round((modalWorkNum - standardHours) * 100) / 100;
+										setEditWorkHours(String(standardHours));
+										setEditOtHours(String(Math.round((modalOtNum + extraOt) * 100) / 100));
+									},
+									className: "w-full rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-left text-[11px] font-semibold text-sky-800 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-300",
+									children: [
+										"Work hours exceed ",
+										standardHours,
+										"h shift. Tap to split extra",
+										" ",
+										formatHoursShort(modalWorkNum - standardHours),
+										"h into Overtime (OT)."
+									]
+								}),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+									className: "rounded-xl border border-slate-200 bg-slate-50 p-3.5 text-xs dark:border-slate-800 dark:bg-slate-800/50",
+									children: [
+										/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+											className: "flex items-center justify-between",
+											children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+												className: "font-semibold text-slate-600 dark:text-slate-300",
+												children: "Recorded Code:"
+											}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
+												className: `rounded-md px-2 py-0.5 font-mono font-bold ${modalPreviewCode === "A" ? "bg-red-100 text-red-700 dark:bg-red-950/60 dark:text-red-300" : modalPreviewCode === "P" ? "bg-emerald-600 text-white" : "bg-sky-600 text-white"}`,
+												children: [
+													modalPreviewCode,
+													" (",
+													Math.round(modalDayFactor * 100) / 100,
+													"d)"
+												]
+											})]
+										}),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+											className: "mt-2 flex items-center justify-between text-slate-600 dark:text-slate-300",
+											children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+												"Base Wage (",
+												formatHoursShort(modalFinalStatus === "P" ? Math.min(modalWorkNum, standardHours) : 0),
+												"h/",
+												standardHours,
+												"h):"
+											] }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+												className: "font-mono font-semibold",
+												children: formatCurrency(modalBaseWage)
+											})]
+										}),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+											className: "mt-1 flex items-center justify-between text-slate-600 dark:text-slate-300",
+											children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+												"OT Wage (",
+												formatHoursShort(modalOtNum),
+												"h × ",
+												formatCurrency(modalOtRateNum),
+												"):"
+											] }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+												className: "font-mono font-semibold",
+												children: formatCurrency(modalOtWage)
+											})]
+										}),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+											className: "mt-2 flex items-center justify-between border-t border-slate-200 pt-2 font-bold text-[#0B1F3A] dark:border-slate-700 dark:text-white",
+											children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Day Total:" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+												className: "font-mono",
+												children: formatCurrency(modalTotalWage)
+											})]
+										})
+									]
+								}),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("label", {
+									className: "block text-xs font-semibold text-slate-700 dark:text-slate-300",
+									children: "Notes"
+								}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+									type: "text",
+									value: editNotes,
+									onChange: (e) => setEditNotes(e.target.value),
+									placeholder: "Optional half-day / task / OT note",
+									className: "mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+								})] }),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+									className: "flex justify-end gap-2 pt-2",
+									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+										type: "button",
+										onClick: () => setCellTarget(null),
+										className: "rounded-lg border border-slate-200 px-4 py-2 text-xs font-medium dark:border-slate-700",
+										children: "Cancel"
+									}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+										type: "submit",
+										disabled: savingKey === "cell_modal",
+										className: "rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50",
+										children: savingKey === "cell_modal" ? "Saving..." : "Save Attendance & OT"
+									})]
+								})
+							]
+						})
+					]
 				})
 			})
 		]
@@ -55410,7 +55838,7 @@ var LoginView = ({ lang, dark, onToggleLang, onToggleDark, onAdminGoogleLogin, o
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 		className: "min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 flex flex-col",
 		children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("header", {
-			className: "flex items-center justify-between gap-4 border-b border-slate-200 bg-white px-4 py-3 sm:px-8 dark:border-slate-800 dark:bg-slate-900",
+			className: "sticky top-0 z-30 flex items-center justify-between gap-4 border-b border-slate-200 bg-white/95 px-4 header-safe backdrop-blur-md sm:px-8 dark:border-slate-800 dark:bg-slate-900/95",
 			children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 				className: "flex items-center gap-3 min-w-0",
 				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("img", {
@@ -77654,7 +78082,7 @@ function le() {
 	}, t.allowFsRead = void 0, t.loadImageFile = t.loadFile;
 }(E.API), function(e) {
 	function r() {
-		return (i.html2canvas ? Promise.resolve(i.html2canvas) : __vitePreload(() => import("./html2canvas-Df71iLFl.js").then((m) => /* @__PURE__ */ __toESM(m.default)), [])).catch(function(t) {
+		return (i.html2canvas ? Promise.resolve(i.html2canvas) : __vitePreload(() => import("./html2canvas-CRsSO_T6.js").then((m) => /* @__PURE__ */ __toESM(m.default)), [])).catch(function(t) {
 			return Promise.reject(/* @__PURE__ */ new Error("Could not load html2canvas: " + t));
 		}).then(function(t) {
 			return t.default ? t.default : t;
@@ -78821,7 +79249,7 @@ function le() {
 		ignoreAnimation: !0,
 		ignoreDimensions: !0
 	}, d = this;
-	return (i.canvg ? Promise.resolve(i.canvg) : __vitePreload(() => import("./index.es-Vt9wQDhb.js"), [])).catch(function(t) {
+	return (i.canvg ? Promise.resolve(i.canvg) : __vitePreload(() => import("./index.es-CkikoM2P.js"), [])).catch(function(t) {
 		return Promise.reject(/* @__PURE__ */ new Error("Could not load canvg: " + t));
 	}).then(function(t) {
 		return t.default ? t.default : t;
@@ -101173,12 +101601,14 @@ var MemberPortalView = ({ lang, dark, onToggleLang, onToggleDark, onSignOut, mem
 	const [tab, setTab] = (0, import_react.useState)("overview");
 	const [memberQr, setMemberQr] = (0, import_react.useState)("");
 	const [adminQr, setAdminQr] = (0, import_react.useState)("");
-	const summary = (0, import_react.useMemo)(() => computeMemberFinancialSummary(member, attendance, overtime, advances, payments), [
+	const stdHours = getStandardWorkHours(settings?.standardWorkHours);
+	const summary = (0, import_react.useMemo)(() => computeMemberFinancialSummary(member, attendance, overtime, advances, payments, void 0, stdHours), [
 		member,
 		attendance,
 		overtime,
 		advances,
-		payments
+		payments,
+		stdHours
 	]);
 	(0, import_react.useEffect)(() => {
 		const mPayload = member.qrData || `SAGAR_MEMBER:${member.memberId}:${member.phone}`;
@@ -101207,7 +101637,7 @@ var MemberPortalView = ({ lang, dark, onToggleLang, onToggleDark, onSignOut, mem
 		className: "min-h-screen bg-slate-50 pb-20 text-slate-900 dark:bg-slate-950 dark:text-slate-100 md:pb-8",
 		children: [
 			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("header", {
-				className: "sticky top-0 z-30 flex items-center justify-between gap-4 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur-md sm:px-8 dark:border-slate-800 dark:bg-slate-900/95",
+				className: "sticky top-0 z-30 flex items-center justify-between gap-4 border-b border-slate-200 bg-white/95 px-4 header-safe backdrop-blur-md sm:px-8 dark:border-slate-800 dark:bg-slate-900/95",
 				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 					className: "flex items-center gap-3 min-w-0",
 					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("img", {
@@ -101292,18 +101722,19 @@ var MemberPortalView = ({ lang, dark, onToggleLang, onToggleDark, onSignOut, mem
 						className: "space-y-6",
 						children: [
 							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-								className: `rounded-2xl border p-6 ${summary.balanceDirection === "YOU OWE MEMBER" ? "border-emerald-200 bg-emerald-50 dark:border-emerald-900/50 dark:bg-emerald-950/30" : summary.balanceDirection === "MEMBER OWES YOU" ? "border-red-200 bg-red-50 dark:border-red-900/50 dark:bg-red-950/30" : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"}`,
+								className: `rounded-2xl border p-6 ${getBalanceVisuals(summary.balanceDirection).bannerClass}`,
 								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
 									className: "text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300",
 									children: "My Pending Balance"
 								}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-									className: "mt-2 flex flex-wrap items-baseline justify-between gap-2",
+									className: "mt-2 flex flex-wrap items-center justify-between gap-3",
 									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-										className: "font-mono text-3xl font-extrabold tabular-nums text-slate-900 dark:text-white",
+										className: `font-mono text-3xl font-extrabold tabular-nums ${getBalanceVisuals(summary.balanceDirection).amountTextClass}`,
 										children: formatCurrency(summary.absBalance)
-									}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-										className: "text-sm font-bold text-[#0B1F3A] dark:text-emerald-300",
-										children: translateDirection(summary.balanceDirection, lang, true)
+									}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)(BalanceStatusBadge, {
+										direction: summary.balanceDirection,
+										lang,
+										isMemberView: true
 									})]
 								})]
 							}),
@@ -101472,26 +101903,30 @@ var MemberPortalView = ({ lang, dark, onToggleLang, onToggleDark, onSignOut, mem
 							children: sortedAtt.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
 								className: "p-6 text-center text-xs text-slate-500",
 								children: "No attendance marked yet."
-							}) : sortedAtt.map((a) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-								className: "flex items-center justify-between px-5 py-3 text-xs",
-								children: [
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-										className: "font-mono font-semibold",
-										children: a.date
-									}),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
-										"Work: ",
-										a.workingHours,
-										"h · OT: ",
-										a.otHours,
-										"h"
-									] }),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-										className: `font-mono font-bold ${a.status === "P" ? "text-emerald-600" : "text-red-600"}`,
-										children: a.status === "P" ? "PRESENT" : "ABSENT"
-									})
-								]
-							}, a.recordId))
+							}) : sortedAtt.map((a) => {
+								const code = getAttendanceCode(a, stdHours);
+								const partial = isPartialAttendance(a, stdHours);
+								return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+									className: "flex items-center justify-between px-5 py-3 text-xs",
+									children: [
+										/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+											className: "font-mono font-semibold",
+											children: a.date
+										}),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+											"Work: ",
+											a.workingHours,
+											"h · OT: ",
+											a.otHours,
+											"h"
+										] }),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+											className: `inline-flex items-center rounded-md px-2 py-0.5 font-mono font-bold ${partial ? "bg-sky-100 text-sky-800 dark:bg-sky-950/60 dark:text-sky-300" : a.status === "P" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300" : "bg-red-100 text-red-700 dark:bg-red-950/60 dark:text-red-300"}`,
+											children: partial ? `${code} (${a.workingHours}h)` : a.status === "P" ? "PRESENT (P)" : "ABSENT (A)"
+										})
+									]
+								}, a.recordId);
+							})
 						})]
 					}),
 					tab === "finances" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
@@ -101596,46 +102031,53 @@ var MemberPortalView = ({ lang, dark, onToggleLang, onToggleDark, onSignOut, mem
 							children: "No salary slips generated yet."
 						}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 							className: "divide-y divide-slate-100 dark:divide-slate-800",
-							children: slips.map((slip) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-								className: "flex flex-wrap items-center justify-between gap-3 px-5 py-4",
-								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-									className: "text-sm font-bold",
-									children: slip.periodLabel
-								}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
-									className: "text-xs text-slate-500",
-									children: [
-										"Gross: ",
-										formatCurrency(slip.grossSalary),
-										" · Final: ",
-										formatCurrency(Math.abs(slip.finalBalance)),
-										" (",
-										slip.balanceDirection,
-										")"
-									]
-								})] }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-									className: "flex items-center gap-2",
-									children: [
-										/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
-											type: "button",
-											onClick: () => downloadSalarySlipPDF(slip),
-											className: "inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold dark:border-slate-700",
-											children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Download, { className: "h-3.5 w-3.5" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "PDF" })]
-										}),
-										/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
-											type: "button",
-											onClick: () => printSalarySlipPDF(slip),
-											className: "inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold dark:border-slate-700",
-											children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Printer, { className: "h-3.5 w-3.5" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Print" })]
-										}),
-										/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
-											type: "button",
-											onClick: () => shareSalarySlipPDF(slip),
-											className: "inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white",
-											children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Share2, { className: "h-3.5 w-3.5" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Share" })]
-										})
-									]
-								})]
-							}, slip.slipId))
+							children: slips.map((slip) => {
+								const slipVisual = getBalanceVisuals(slip.balanceDirection);
+								return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+									className: "flex flex-wrap items-center justify-between gap-3 px-5 py-4",
+									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+										className: "text-sm font-bold",
+										children: slip.periodLabel
+									}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+										className: "mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500",
+										children: [
+											/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: ["Gross: ", formatCurrency(slip.grossSalary)] }),
+											/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "·" }),
+											/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+												className: `font-mono font-bold ${slipVisual.amountTextClass}`,
+												children: formatCurrency(Math.abs(slip.finalBalance))
+											}),
+											/* @__PURE__ */ (0, import_jsx_runtime.jsx)(BalanceStatusBadge, {
+												direction: slip.balanceDirection,
+												lang,
+												isMemberView: true
+											})
+										]
+									})] }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+										className: "flex items-center gap-2",
+										children: [
+											/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+												type: "button",
+												onClick: () => downloadSalarySlipPDF(slip),
+												className: "inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold dark:border-slate-700",
+												children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Download, { className: "h-3.5 w-3.5" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "PDF" })]
+											}),
+											/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+												type: "button",
+												onClick: () => printSalarySlipPDF(slip),
+												className: "inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold dark:border-slate-700",
+												children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Printer, { className: "h-3.5 w-3.5" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Print" })]
+											}),
+											/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+												type: "button",
+												onClick: () => shareSalarySlipPDF(slip),
+												className: "inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white",
+												children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Share2, { className: "h-3.5 w-3.5" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Share" })]
+											})
+										]
+									})]
+								}, slip.slipId);
+							})
 						})]
 					}),
 					tab === "pay" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
@@ -101917,12 +102359,14 @@ var MembersView = ({ lang, members, attendance, overtime, advances, payments, sl
 			setSaving(false);
 		}
 	};
-	const selectedSummary = (0, import_react.useMemo)(() => selectedMember ? computeMemberFinancialSummary(selectedMember, attendance, overtime, advances, payments) : null, [
+	const stdHours = getStandardWorkHours(settings?.standardWorkHours);
+	const selectedSummary = (0, import_react.useMemo)(() => selectedMember ? computeMemberFinancialSummary(selectedMember, attendance, overtime, advances, payments, void 0, stdHours) : null, [
 		selectedMember,
 		attendance,
 		overtime,
 		advances,
-		payments
+		payments,
+		stdHours
 	]);
 	const selectedSlips = (0, import_react.useMemo)(() => selectedMember ? slips.filter((s) => s.memberId === selectedMember.memberId) : [], [selectedMember, slips]);
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
@@ -101986,68 +102430,79 @@ var MembersView = ({ lang, members, attendance, overtime, advances, payments, sl
 			}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 				className: "grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3",
 				children: filteredMembers.map((m) => {
-					const sum = computeMemberFinancialSummary(m, attendance, overtime, advances, payments);
+					const sum = computeMemberFinancialSummary(m, attendance, overtime, advances, payments, void 0, stdHours);
+					const balVisual = getBalanceVisuals(sum.balanceDirection);
 					return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 						className: "flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-5 transition hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-700",
-						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-							className: "flex items-start justify-between gap-3",
-							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-								onClick: () => setSelectedMember(m),
-								className: "flex cursor-pointer items-center gap-3 min-w-0",
-								children: [m.photoUrl ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("img", {
-									src: m.photoUrl,
-									alt: m.fullName,
-									className: "h-12 w-12 rounded-xl object-cover border border-slate-200 dark:border-slate-700 shrink-0"
-								}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-									className: "flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[#0B1F3A] font-display text-base font-bold text-white",
-									children: m.fullName.slice(0, 2).toUpperCase()
-								}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-									className: "min-w-0",
-									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", {
-										className: "truncate font-bold text-slate-900 dark:text-white",
-										children: m.fullName
-									}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
-										className: "text-xs text-slate-500 dark:text-slate-400",
-										children: [
-											m.memberCode,
-											" · ",
-											m.phone
-										]
+						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
+							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+								className: "flex items-start justify-between gap-3",
+								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+									onClick: () => setSelectedMember(m),
+									className: "flex cursor-pointer items-center gap-3 min-w-0",
+									children: [m.photoUrl ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("img", {
+										src: m.photoUrl,
+										alt: m.fullName,
+										className: "h-12 w-12 rounded-xl object-cover border border-slate-200 dark:border-slate-700 shrink-0"
+									}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+										className: "flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[#0B1F3A] font-display text-base font-bold text-white",
+										children: m.fullName.slice(0, 2).toUpperCase()
+									}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+										className: "min-w-0",
+										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", {
+											className: "truncate font-bold text-slate-900 dark:text-white",
+											children: m.fullName
+										}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+											className: "text-xs text-slate-500 dark:text-slate-400",
+											children: [
+												m.memberCode,
+												" · ",
+												m.phone
+											]
+										})]
 									})]
+								}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+									className: `text-[11px] font-semibold uppercase tracking-wide ${m.status === "active" ? "text-emerald-600 dark:text-emerald-400" : "text-slate-400"}`,
+									children: m.status
 								})]
-							}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-								className: `text-[11px] font-semibold uppercase tracking-wide ${m.status === "active" ? "text-emerald-600 dark:text-emerald-400" : "text-slate-400"}`,
-								children: m.status
-							})]
-						}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-							className: "mt-4 grid grid-cols-3 gap-2 border-t border-slate-100 pt-3 text-xs dark:border-slate-800",
-							children: [
-								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-									className: "text-slate-500",
-									children: "Daily Rate"
-								}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-									className: "mt-0.5 font-mono font-bold tabular-nums text-slate-900 dark:text-white",
-									children: formatCurrency(m.dailySalaryRate)
-								})] }),
-								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-									className: "text-slate-500",
-									children: "OT / Hr"
-								}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-									className: "mt-0.5 font-mono font-bold tabular-nums text-slate-900 dark:text-white",
-									children: formatCurrency(m.otRate)
-								})] }),
-								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-									className: "text-right",
-									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+							}),
+							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+								className: "mt-4 grid grid-cols-3 gap-2 border-t border-slate-100 pt-3 text-xs dark:border-slate-800",
+								children: [
+									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
 										className: "text-slate-500",
-										children: "Balance"
+										children: "Daily Rate"
 									}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-										className: `mt-0.5 font-mono font-bold tabular-nums ${sum.balanceDirection === "YOU OWE MEMBER" ? "text-emerald-600 dark:text-emerald-400" : sum.balanceDirection === "MEMBER OWES YOU" ? "text-red-600 dark:text-red-400" : "text-slate-500"}`,
-										children: formatCurrency(sum.absBalance)
-									})]
+										className: "mt-0.5 font-mono font-bold tabular-nums text-slate-900 dark:text-white",
+										children: formatCurrency(m.dailySalaryRate)
+									})] }),
+									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+										className: "text-slate-500",
+										children: "OT / Hr"
+									}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+										className: "mt-0.5 font-mono font-bold tabular-nums text-slate-900 dark:text-white",
+										children: formatCurrency(m.otRate)
+									})] }),
+									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+										className: "text-right",
+										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+											className: "text-slate-500",
+											children: "Balance"
+										}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+											className: `mt-0.5 font-mono font-bold tabular-nums ${balVisual.amountTextClass}`,
+											children: formatCurrency(sum.absBalance)
+										})]
+									})
+								]
+							}),
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+								className: "mt-2.5 flex justify-end",
+								children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(BalanceStatusBadge, {
+									direction: sum.balanceDirection,
+									lang
 								})
-							]
-						})] }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+							})
+						] }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 							className: "mt-4 flex items-center justify-between gap-2 border-t border-slate-100 pt-3 dark:border-slate-800",
 							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 								type: "button",
@@ -102360,12 +102815,15 @@ var MembersView = ({ lang, members, attendance, overtime, advances, payments, sl
 												children: "Final Balance"
 											}),
 											/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-												className: `mt-1 font-mono text-base font-bold tabular-nums ${selectedSummary.balanceDirection === "YOU OWE MEMBER" ? "text-emerald-600" : selectedSummary.balanceDirection === "MEMBER OWES YOU" ? "text-red-600" : "text-slate-500"}`,
+												className: `mt-1 font-mono text-base font-bold tabular-nums ${getBalanceVisuals(selectedSummary.balanceDirection).amountTextClass}`,
 												children: formatCurrency(selectedSummary.absBalance)
 											}),
-											/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-												className: "text-[10px] font-semibold text-slate-500",
-												children: selectedSummary.balanceDirection
+											/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+												className: "mt-1",
+												children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(BalanceStatusBadge, {
+													direction: selectedSummary.balanceDirection,
+													lang
+												})
 											})
 										]
 									})
@@ -102386,29 +102844,35 @@ var MembersView = ({ lang, members, attendance, overtime, advances, payments, sl
 								children: "No archived salary slips yet."
 							}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 								className: "mt-2 max-h-40 overflow-y-auto divide-y divide-slate-100 rounded-xl border border-slate-200 dark:divide-slate-800 dark:border-slate-800",
-								children: selectedSlips.map((slip) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-									className: "flex items-center justify-between px-4 py-2.5 text-xs",
-									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-										className: "font-semibold",
-										children: slip.periodLabel
-									}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
-										className: "text-slate-500",
-										children: [
-											slip.startDate,
-											" to ",
-											slip.endDate
-										]
-									})] }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-										className: "text-right",
-										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-											className: "font-mono font-bold",
-											children: formatCurrency(Math.abs(slip.finalBalance))
-										}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-											className: "text-[10px] text-slate-500",
-											children: slip.balanceDirection
+								children: selectedSlips.map((slip) => {
+									const slipVis = getBalanceVisuals(slip.balanceDirection);
+									return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+										className: "flex items-center justify-between px-4 py-2.5 text-xs",
+										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+											className: "font-semibold",
+											children: slip.periodLabel
+										}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+											className: "text-slate-500",
+											children: [
+												slip.startDate,
+												" to ",
+												slip.endDate
+											]
+										})] }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+											className: "text-right",
+											children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+												className: `font-mono font-bold ${slipVis.amountTextClass}`,
+												children: formatCurrency(Math.abs(slip.finalBalance))
+											}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+												className: "mt-0.5",
+												children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(BalanceStatusBadge, {
+													direction: slip.balanceDirection,
+													lang
+												})
+											})]
 										})]
-									})]
-								}, slip.slipId))
+									}, slip.slipId);
+								})
 							})]
 						})
 					]
@@ -103033,6 +103497,7 @@ var ReportsSettingsView = ({ lang, members, attendance, overtime, advances, paym
 		if (subTab === "settings") fetchProviderStatus();
 	}, [subTab]);
 	const memberMap = (0, import_react.useMemo)(() => new Map(members.map((m) => [m.memberId, m])), [members]);
+	const stdHours = getStandardWorkHours(settings?.standardWorkHours);
 	const reportPayload = (0, import_react.useMemo)(() => {
 		if (reportType === "daily") {
 			const headers = [
@@ -103049,7 +103514,7 @@ var ReportsSettingsView = ({ lang, members, attendance, overtime, advances, paym
 					m.memberCode,
 					m.fullName,
 					reportDate,
-					rec?.status || "Unmarked",
+					rec ? getAttendanceCode(rec, stdHours) : "Unmarked",
 					rec?.workingHours ?? 0,
 					rec?.otHours ?? 0
 				];
@@ -103065,7 +103530,7 @@ var ReportsSettingsView = ({ lang, members, attendance, overtime, advances, paym
 			const headers = [
 				"ID",
 				"Name",
-				"Present",
+				"Present (Eq)",
 				"Absent",
 				"OT Hrs",
 				"Base Salary",
@@ -103080,7 +103545,7 @@ var ReportsSettingsView = ({ lang, members, attendance, overtime, advances, paym
 				const s = computeMemberFinancialSummary(m, attendance, overtime, advances, payments, {
 					startDate: range.startDate,
 					endDate: range.endDate
-				});
+				}, stdHours);
 				return [
 					m.memberCode,
 					m.fullName,
@@ -103109,15 +103574,16 @@ var ReportsSettingsView = ({ lang, members, attendance, overtime, advances, paym
 				headers: ["Info"],
 				rows: [["No member selected"]]
 			};
-			const s = computeMemberFinancialSummary(m, attendance, overtime, advances, payments);
+			const s = computeMemberFinancialSummary(m, attendance, overtime, advances, payments, void 0, stdHours);
 			const headers = ["Metric", "Value"];
 			const rows = [
 				["Member Name", m.fullName],
 				["Member ID", m.memberCode],
 				["Mobile", m.phone],
-				["Present Days", s.presentDays],
+				["Present Days (Eq)", s.presentDays],
 				["Absent Days", s.absentDays],
 				["Attendance %", `${s.attendancePercent}%`],
+				["Total Work Hours", s.workingHours],
 				["Total OT Hours", s.otHours],
 				["Total Salary Earned", s.totalSalaryEarned],
 				["Total OT Earned", s.totalOtEarned],
@@ -103147,7 +103613,7 @@ var ReportsSettingsView = ({ lang, members, attendance, overtime, advances, paym
 				a.date,
 				memberMap.get(a.memberId)?.memberCode || a.memberId,
 				memberMap.get(a.memberId)?.fullName || a.memberId,
-				a.status,
+				getAttendanceCode(a, stdHours),
 				a.workingHours,
 				a.otHours
 			])
@@ -103207,7 +103673,8 @@ var ReportsSettingsView = ({ lang, members, attendance, overtime, advances, paym
 		overtime,
 		advances,
 		payments,
-		memberMap
+		memberMap,
+		stdHours
 	]);
 	const handleQrUpload = async (e) => {
 		const file = e.target.files?.[0];
@@ -103779,9 +104246,10 @@ var ReportsSettingsView = ({ lang, members, attendance, overtime, advances, paym
 	});
 };
 // src/components/SalaryView.tsx
-var SalaryView = ({ lang, members, attendance, overtime, advances, payments, slips, onToast }) => {
+var SalaryView = ({ lang, members, attendance, overtime, advances, payments, slips, settings, onToast }) => {
 	const t = TRANSLATIONS[lang];
 	const today = todayISO();
+	const stdHours = getStandardWorkHours(settings?.standardWorkHours);
 	const [periodType, setPeriodType] = (0, import_react.useState)("weekly");
 	const [weekAnchor, setWeekAnchor] = (0, import_react.useState)(today);
 	const [monthVal, setMonthVal] = (0, import_react.useState)(today.slice(0, 7));
@@ -103823,14 +104291,15 @@ var SalaryView = ({ lang, members, attendance, overtime, advances, payments, sli
 		return members.map((m) => computeMemberFinancialSummary(m, attendance, overtime, advances, payments, {
 			startDate: range.startDate,
 			endDate: range.endDate
-		}));
+		}, stdHours));
 	}, [
 		members,
 		attendance,
 		overtime,
 		advances,
 		payments,
-		range
+		range,
+		stdHours
 	]);
 	const totals = (0, import_react.useMemo)(() => {
 		return rows.reduce((acc, r) => ({
@@ -104076,73 +104545,79 @@ var SalaryView = ({ lang, members, attendance, overtime, advances, payments, sli
 							] })
 						}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("tbody", {
 							className: "divide-y divide-slate-100 dark:divide-slate-800",
-							children: rows.map((r) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("tr", {
-								className: "hover:bg-slate-50/70 dark:hover:bg-slate-800/40",
-								children: [
-									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("td", {
-										className: "px-4 py-3",
-										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-											className: "font-semibold text-slate-900 dark:text-white",
-											children: r.member.fullName
-										}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-											className: "text-[11px] text-slate-500",
-											children: r.member.memberCode
-										})]
-									}),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("td", {
-										className: "px-3 py-3 text-right font-mono tabular-nums",
-										children: [
-											r.presentDays,
-											" / ",
-											r.absentDays
-										]
-									}),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
-										className: "px-3 py-3 text-right font-mono tabular-nums",
-										children: formatCurrency(r.totalSalaryEarned)
-									}),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
-										className: "px-3 py-3 text-right font-mono tabular-nums",
-										children: formatCurrency(r.totalOtEarned)
-									}),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
-										className: "px-3 py-3 text-right font-mono font-bold tabular-nums",
-										children: formatCurrency(r.grossEarned)
-									}),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
-										className: "px-3 py-3 text-right font-mono tabular-nums text-amber-600",
-										children: formatCurrency(r.normalAdvanceNet)
-									}),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
-										className: "px-3 py-3 text-right font-mono tabular-nums text-amber-600",
-										children: formatCurrency(r.cookingAdvanceNet)
-									}),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
-										className: "px-3 py-3 text-right font-mono tabular-nums",
-										children: formatCurrency(r.salaryPaymentsGiven)
-									}),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("td", {
-										className: "px-3 py-3 text-right",
-										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-											className: `font-mono font-bold tabular-nums ${r.balanceDirection === "YOU OWE MEMBER" ? "text-emerald-600" : r.balanceDirection === "MEMBER OWES YOU" ? "text-red-600" : "text-slate-500"}`,
-											children: formatCurrency(r.absBalance)
-										}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-											className: "text-[10px] text-slate-500",
-											children: r.balanceDirection
-										})]
-									}),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
-										className: "px-4 py-3 text-right",
-										children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
-											type: "button",
-											disabled: generatingId === r.member.memberId,
-											onClick: () => handleSaveAndDownload(r),
-											className: "inline-flex items-center gap-1.5 rounded-lg bg-[#0B1F3A] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#132E54] disabled:opacity-50 whitespace-nowrap",
-											children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(FileText, { className: "h-3.5 w-3.5" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Generate & PDF" })]
+							children: rows.map((r) => {
+								const balVisual = getBalanceVisuals(r.balanceDirection);
+								return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("tr", {
+									className: "hover:bg-slate-50/70 dark:hover:bg-slate-800/40",
+									children: [
+										/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("td", {
+											className: "px-4 py-3",
+											children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+												className: "font-semibold text-slate-900 dark:text-white",
+												children: r.member.fullName
+											}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+												className: "text-[11px] text-slate-500",
+												children: r.member.memberCode
+											})]
+										}),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("td", {
+											className: "px-3 py-3 text-right font-mono tabular-nums",
+											children: [
+												r.presentDays,
+												" / ",
+												r.absentDays
+											]
+										}),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
+											className: "px-3 py-3 text-right font-mono tabular-nums",
+											children: formatCurrency(r.totalSalaryEarned)
+										}),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
+											className: "px-3 py-3 text-right font-mono tabular-nums",
+											children: formatCurrency(r.totalOtEarned)
+										}),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
+											className: "px-3 py-3 text-right font-mono font-bold tabular-nums",
+											children: formatCurrency(r.grossEarned)
+										}),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
+											className: "px-3 py-3 text-right font-mono tabular-nums text-amber-600",
+											children: formatCurrency(r.normalAdvanceNet)
+										}),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
+											className: "px-3 py-3 text-right font-mono tabular-nums text-amber-600",
+											children: formatCurrency(r.cookingAdvanceNet)
+										}),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
+											className: "px-3 py-3 text-right font-mono tabular-nums",
+											children: formatCurrency(r.salaryPaymentsGiven)
+										}),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("td", {
+											className: "px-3 py-3 text-right",
+											children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+												className: `font-mono font-bold tabular-nums ${balVisual.amountTextClass}`,
+												children: formatCurrency(r.absBalance)
+											}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+												className: "mt-1 flex justify-end",
+												children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(BalanceStatusBadge, {
+													direction: r.balanceDirection,
+													lang
+												})
+											})]
+										}),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
+											className: "px-4 py-3 text-right",
+											children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+												type: "button",
+												disabled: generatingId === r.member.memberId,
+												onClick: () => handleSaveAndDownload(r),
+												className: "inline-flex items-center gap-1.5 rounded-lg bg-[#0B1F3A] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#132E54] disabled:opacity-50 whitespace-nowrap",
+												children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(FileText, { className: "h-3.5 w-3.5" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Generate & PDF" })]
+											})
 										})
-									})
-								]
-							}, r.member.memberId))
+									]
+								}, r.member.memberId);
+							})
 						})]
 					})
 				})
@@ -104164,56 +104639,63 @@ var SalaryView = ({ lang, members, attendance, overtime, advances, payments, sli
 					children: "Generate a salary slip above to archive it for download, print, or sharing."
 				}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 					className: "divide-y divide-slate-100 dark:divide-slate-800",
-					children: slips.map((slip) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-						className: "flex flex-wrap items-center justify-between gap-3 px-5 py-3.5",
-						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
-							className: "text-sm font-bold text-slate-900 dark:text-white",
-							children: [
-								slip.memberName,
-								" (",
-								slip.memberCode,
-								")"
-							]
-						}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
-							className: "text-xs text-slate-500",
-							children: [
-								slip.periodLabel,
-								" · Net: ",
-								formatCurrency(Math.abs(slip.finalBalance)),
-								" (",
-								slip.balanceDirection,
-								")"
-							]
-						})] }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-							className: "flex items-center gap-2",
-							children: [
-								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
-									type: "button",
-									onClick: () => downloadSalarySlipPDF(slip),
-									className: "inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800",
-									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Download, { className: "h-3.5 w-3.5" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: t.downloadPdf })]
-								}),
-								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
-									type: "button",
-									onClick: () => printSalarySlipPDF(slip),
-									className: "inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800",
-									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Printer, { className: "h-3.5 w-3.5" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: t.printPdf })]
-								}),
-								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
-									type: "button",
-									onClick: () => shareSalarySlipPDF(slip),
-									className: "inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700",
-									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Share2, { className: "h-3.5 w-3.5" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: t.sharePdf })]
-								}),
-								/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
-									type: "button",
-									onClick: () => setDeleteSlipId(slip.slipId),
-									className: "flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40",
-									children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Trash2, { className: "h-4 w-4" })
-								})
-							]
-						})]
-					}, slip.slipId))
+					children: slips.map((slip) => {
+						const slipVisual = getBalanceVisuals(slip.balanceDirection);
+						return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+							className: "flex flex-wrap items-center justify-between gap-3 px-5 py-3.5",
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+								className: "text-sm font-bold text-slate-900 dark:text-white",
+								children: [
+									slip.memberName,
+									" (",
+									slip.memberCode,
+									")"
+								]
+							}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+								className: "mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500",
+								children: [
+									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: slip.periodLabel }),
+									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "·" }),
+									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+										className: `font-mono font-bold ${slipVisual.amountTextClass}`,
+										children: formatCurrency(Math.abs(slip.finalBalance))
+									}),
+									/* @__PURE__ */ (0, import_jsx_runtime.jsx)(BalanceStatusBadge, {
+										direction: slip.balanceDirection,
+										lang
+									})
+								]
+							})] }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+								className: "flex items-center gap-2",
+								children: [
+									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+										type: "button",
+										onClick: () => downloadSalarySlipPDF(slip),
+										className: "inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800",
+										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Download, { className: "h-3.5 w-3.5" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: t.downloadPdf })]
+									}),
+									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+										type: "button",
+										onClick: () => printSalarySlipPDF(slip),
+										className: "inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800",
+										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Printer, { className: "h-3.5 w-3.5" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: t.printPdf })]
+									}),
+									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+										type: "button",
+										onClick: () => shareSalarySlipPDF(slip),
+										className: "inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700",
+										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Share2, { className: "h-3.5 w-3.5" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: t.sharePdf })]
+									}),
+									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+										type: "button",
+										onClick: () => setDeleteSlipId(slip.slipId),
+										className: "flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40",
+										children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Trash2, { className: "h-4 w-4" })
+									})
+								]
+							})]
+						}, slip.slipId);
+					})
 				})]
 			}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsx)(ConfirmDialog, {
@@ -104711,7 +105193,7 @@ function App() {
 			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 				className: "flex flex-1 flex-col lg:pl-64 pb-20 lg:pb-0 min-w-0",
 				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("header", {
-					className: "sticky top-0 z-30 flex items-center justify-between gap-4 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur-md sm:px-6 dark:border-slate-800 dark:bg-slate-900/95",
+					className: "sticky top-0 z-30 flex items-center justify-between gap-4 border-b border-slate-200 bg-white/95 px-4 header-safe backdrop-blur-md sm:px-6 dark:border-slate-800 dark:bg-slate-900/95",
 					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 						className: "flex items-center gap-3 min-w-0",
 						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
@@ -104752,6 +105234,7 @@ function App() {
 							overtime,
 							advances,
 							payments,
+							settings,
 							onNavigate: (tab) => setActiveTab(tab)
 						}),
 						activeTab === "members" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(MembersView, {
@@ -104781,6 +105264,7 @@ function App() {
 							advances,
 							payments,
 							slips,
+							settings,
 							onToast: showToast
 						}),
 						activeTab === "advances" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(AdvancesView, {
@@ -104790,6 +105274,7 @@ function App() {
 							overtime,
 							advances,
 							payments,
+							settings,
 							onToast: showToast
 						}),
 						activeTab === "payments" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PaymentsView, {
@@ -104831,7 +105316,7 @@ function App() {
 					className: "fixed inset-0 bg-slate-950/60 backdrop-blur-sm",
 					onClick: () => setMobileMenuOpen(false)
 				}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-					className: "relative z-10 flex w-72 flex-col bg-[#0B1F3A] text-white",
+					className: "relative z-10 flex w-72 flex-col bg-[#0B1F3A] text-white drawer-safe",
 					children: [
 						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 							className: "flex items-center justify-between border-b border-white/10 px-5 py-4",
@@ -104922,7 +105407,7 @@ function App() {
 				})
 			}),
 			toast && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-				className: `fixed right-4 top-16 z-50 max-w-sm rounded-xl px-4 py-3 text-xs font-semibold text-white shadow-lg ${toast.type === "error" ? "bg-red-600" : "bg-emerald-600"}`,
+				className: `fixed right-4 top-toast-safe z-50 max-w-sm rounded-xl px-4 py-3 text-xs font-semibold text-white shadow-lg ${toast.type === "error" ? "bg-red-600" : "bg-emerald-600"}`,
 				children: toast.msg
 			}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsx)(OfflineIndicator, {})

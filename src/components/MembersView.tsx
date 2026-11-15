@@ -14,6 +14,8 @@ import QRCode from 'qrcode';
 import {
   computeMemberFinancialSummary,
   formatCurrency,
+  getBalanceVisuals,
+  getStandardWorkHours,
   todayISO,
 } from '../lib/accounting';
 import { shouldUseBackendApi } from '../lib/apiClient';
@@ -35,6 +37,7 @@ import type {
   PaymentTransaction,
   SalarySlip,
 } from '../types';
+import { BalanceStatusBadge } from './BalanceStatusBadge';
 import { ConfirmDialog } from './ConfirmDialog';
 
 interface MembersViewProps {
@@ -277,12 +280,22 @@ export const MembersView: React.FC<MembersViewProps> = ({
     }
   };
 
+  const stdHours = getStandardWorkHours(settings?.standardWorkHours);
+
   const selectedSummary = useMemo(
     () =>
       selectedMember
-        ? computeMemberFinancialSummary(selectedMember, attendance, overtime, advances, payments)
+        ? computeMemberFinancialSummary(
+            selectedMember,
+            attendance,
+            overtime,
+            advances,
+            payments,
+            undefined,
+            stdHours
+          )
         : null,
-    [selectedMember, attendance, overtime, advances, payments]
+    [selectedMember, attendance, overtime, advances, payments, stdHours]
   );
 
   const selectedSlips = useMemo(
@@ -361,7 +374,16 @@ export const MembersView: React.FC<MembersViewProps> = ({
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
           {filteredMembers.map((m) => {
-            const sum = computeMemberFinancialSummary(m, attendance, overtime, advances, payments);
+            const sum = computeMemberFinancialSummary(
+              m,
+              attendance,
+              overtime,
+              advances,
+              payments,
+              undefined,
+              stdHours
+            );
+            const balVisual = getBalanceVisuals(sum.balanceDirection);
             return (
               <div
                 key={m.memberId}
@@ -419,18 +441,13 @@ export const MembersView: React.FC<MembersViewProps> = ({
                     </div>
                     <div className="text-right">
                       <p className="text-slate-500">Balance</p>
-                      <p
-                        className={`mt-0.5 font-mono font-bold tabular-nums ${
-                          sum.balanceDirection === 'YOU OWE MEMBER'
-                            ? 'text-emerald-600 dark:text-emerald-400'
-                            : sum.balanceDirection === 'MEMBER OWES YOU'
-                              ? 'text-red-600 dark:text-red-400'
-                              : 'text-slate-500'
-                        }`}
-                      >
+                      <p className={`mt-0.5 font-mono font-bold tabular-nums ${balVisual.amountTextClass}`}>
                         {formatCurrency(sum.absBalance)}
                       </p>
                     </div>
+                  </div>
+                  <div className="mt-2.5 flex justify-end">
+                    <BalanceStatusBadge direction={sum.balanceDirection} lang={lang} />
                   </div>
                 </div>
 
@@ -740,18 +757,14 @@ export const MembersView: React.FC<MembersViewProps> = ({
                   <p className="text-slate-500">Final Balance</p>
                   <p
                     className={`mt-1 font-mono text-base font-bold tabular-nums ${
-                      selectedSummary.balanceDirection === 'YOU OWE MEMBER'
-                        ? 'text-emerald-600'
-                        : selectedSummary.balanceDirection === 'MEMBER OWES YOU'
-                          ? 'text-red-600'
-                          : 'text-slate-500'
+                      getBalanceVisuals(selectedSummary.balanceDirection).amountTextClass
                     }`}
                   >
                     {formatCurrency(selectedSummary.absBalance)}
                   </p>
-                  <p className="text-[10px] font-semibold text-slate-500">
-                    {selectedSummary.balanceDirection}
-                  </p>
+                  <div className="mt-1">
+                    <BalanceStatusBadge direction={selectedSummary.balanceDirection} lang={lang} />
+                  </div>
                 </div>
               </div>
             </div>
@@ -764,18 +777,25 @@ export const MembersView: React.FC<MembersViewProps> = ({
                 <p className="mt-2 text-xs text-slate-500">No archived salary slips yet.</p>
               ) : (
                 <div className="mt-2 max-h-40 overflow-y-auto divide-y divide-slate-100 rounded-xl border border-slate-200 dark:divide-slate-800 dark:border-slate-800">
-                  {selectedSlips.map((slip) => (
-                    <div key={slip.slipId} className="flex items-center justify-between px-4 py-2.5 text-xs">
-                      <div>
-                        <p className="font-semibold">{slip.periodLabel}</p>
-                        <p className="text-slate-500">{slip.startDate} to {slip.endDate}</p>
+                  {selectedSlips.map((slip) => {
+                    const slipVis = getBalanceVisuals(slip.balanceDirection);
+                    return (
+                      <div key={slip.slipId} className="flex items-center justify-between px-4 py-2.5 text-xs">
+                        <div>
+                          <p className="font-semibold">{slip.periodLabel}</p>
+                          <p className="text-slate-500">{slip.startDate} to {slip.endDate}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className={`font-mono font-bold ${slipVis.amountTextClass}`}>
+                            {formatCurrency(Math.abs(slip.finalBalance))}
+                          </p>
+                          <div className="mt-0.5">
+                            <BalanceStatusBadge direction={slip.balanceDirection} lang={lang} />
+                          </div>
+                        </div>
                       </div>
-                      <div className="text-right">
-                        <p className="font-mono font-bold">{formatCurrency(Math.abs(slip.finalBalance))}</p>
-                        <p className="text-[10px] text-slate-500">{slip.balanceDirection}</p>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>

@@ -3,6 +3,8 @@ import { MessageCircle, Send, Smartphone } from 'lucide-react';
 import {
   computeMemberFinancialSummary,
   formatCurrency,
+  getBalanceVisuals,
+  getStandardWorkHours,
 } from '../lib/accounting';
 import { apiUrl, shouldUseBackendApi } from '../lib/apiClient';
 import { auth } from '../lib/firebase';
@@ -11,7 +13,6 @@ import {
   buildTemplateMessage,
   MessageTemplateType,
   TRANSLATIONS,
-  translateDirection,
 } from '../lib/i18n';
 import type {
   AdvanceTransaction,
@@ -22,6 +23,7 @@ import type {
   OvertimeRecord,
   PaymentTransaction,
 } from '../types';
+import { BalanceStatusBadge } from './BalanceStatusBadge';
 
 interface AccountingMessagesViewProps {
   lang: Language;
@@ -60,9 +62,22 @@ export const AccountingMessagesView: React.FC<AccountingMessagesViewProps> = ({
   const [customMessage, setCustomMessage] = useState('');
   const [sendingSms, setSendingSms] = useState(false);
 
+  const stdHours = getStandardWorkHours(settings?.standardWorkHours);
+
   const summaries = useMemo(
-    () => members.map((m) => computeMemberFinancialSummary(m, attendance, overtime, advances, payments)),
-    [members, attendance, overtime, advances, payments]
+    () =>
+      members.map((m) =>
+        computeMemberFinancialSummary(
+          m,
+          attendance,
+          overtime,
+          advances,
+          payments,
+          undefined,
+          stdHours
+        )
+      ),
+    [members, attendance, overtime, advances, payments, stdHours]
   );
 
   const selectedSummary = useMemo(
@@ -217,44 +232,39 @@ export const AccountingMessagesView: React.FC<AccountingMessagesViewProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {summaries.map((s) => (
-                  <tr
-                    key={s.member.memberId}
-                    onClick={() => setSelectedMemberId(s.member.memberId)}
-                    className={`cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/40 ${
-                      selectedSummary?.member.memberId === s.member.memberId ? 'bg-slate-50 dark:bg-slate-800/40' : ''
-                    }`}
-                  >
-                    <td className="px-4 py-3">
-                      <p className="font-semibold text-slate-900 dark:text-white">{s.member.fullName}</p>
-                      <p className="text-[11px] text-slate-500">{s.member.memberCode}</p>
-                    </td>
-                    <td className="px-3 py-3 text-right font-mono tabular-nums">{formatCurrency(s.totalSalaryEarned)}</td>
-                    <td className="px-3 py-3 text-right font-mono tabular-nums">{formatCurrency(s.totalOtEarned)}</td>
-                    <td className="px-3 py-3 text-right font-mono tabular-nums text-amber-600">{formatCurrency(s.normalAdvanceNet)}</td>
-                    <td className="px-3 py-3 text-right font-mono tabular-nums text-amber-600">{formatCurrency(s.cookingAdvanceNet)}</td>
-                    <td className="px-3 py-3 text-right font-mono font-semibold tabular-nums text-amber-700">{formatCurrency(s.totalAdvanceOutstanding)}</td>
-                    <td className="px-3 py-3 text-right font-mono tabular-nums">{formatCurrency(s.salaryPaymentsGiven)}</td>
-                    <td className="px-3 py-3 text-right font-mono tabular-nums">{formatCurrency(s.salaryPaymentsReceived)}</td>
-                    <td className="px-3 py-3 text-right font-mono tabular-nums">{formatCurrency(s.previousBalance)}</td>
-                    <td className="px-4 py-3 text-right">
-                      <p
-                        className={`font-mono font-bold tabular-nums ${
-                          s.balanceDirection === 'YOU OWE MEMBER'
-                            ? 'text-emerald-600'
-                            : s.balanceDirection === 'MEMBER OWES YOU'
-                              ? 'text-red-600'
-                              : 'text-slate-500'
-                        }`}
-                      >
-                        {formatCurrency(s.absBalance)}
-                      </p>
-                      <p className="text-[10px] font-semibold text-slate-500">
-                        {translateDirection(s.balanceDirection, lang)}
-                      </p>
-                    </td>
-                  </tr>
-                ))}
+                {summaries.map((s) => {
+                  const balVisual = getBalanceVisuals(s.balanceDirection);
+                  return (
+                    <tr
+                      key={s.member.memberId}
+                      onClick={() => setSelectedMemberId(s.member.memberId)}
+                      className={`cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/40 ${
+                        selectedSummary?.member.memberId === s.member.memberId ? 'bg-slate-50 dark:bg-slate-800/40' : ''
+                      }`}
+                    >
+                      <td className="px-4 py-3">
+                        <p className="font-semibold text-slate-900 dark:text-white">{s.member.fullName}</p>
+                        <p className="text-[11px] text-slate-500">{s.member.memberCode}</p>
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono tabular-nums">{formatCurrency(s.totalSalaryEarned)}</td>
+                      <td className="px-3 py-3 text-right font-mono tabular-nums">{formatCurrency(s.totalOtEarned)}</td>
+                      <td className="px-3 py-3 text-right font-mono tabular-nums text-amber-600">{formatCurrency(s.normalAdvanceNet)}</td>
+                      <td className="px-3 py-3 text-right font-mono tabular-nums text-amber-600">{formatCurrency(s.cookingAdvanceNet)}</td>
+                      <td className="px-3 py-3 text-right font-mono font-semibold tabular-nums text-amber-700">{formatCurrency(s.totalAdvanceOutstanding)}</td>
+                      <td className="px-3 py-3 text-right font-mono tabular-nums">{formatCurrency(s.salaryPaymentsGiven)}</td>
+                      <td className="px-3 py-3 text-right font-mono tabular-nums">{formatCurrency(s.salaryPaymentsReceived)}</td>
+                      <td className="px-3 py-3 text-right font-mono tabular-nums">{formatCurrency(s.previousBalance)}</td>
+                      <td className="px-4 py-3 text-right">
+                        <p className={`font-mono font-bold tabular-nums ${balVisual.amountTextClass}`}>
+                          {formatCurrency(s.absBalance)}
+                        </p>
+                        <div className="mt-1 flex justify-end">
+                          <BalanceStatusBadge direction={s.balanceDirection} lang={lang} />
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -266,11 +276,21 @@ export const AccountingMessagesView: React.FC<AccountingMessagesViewProps> = ({
         <div className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4 dark:border-slate-800">
             <div>
-              <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                WhatsApp &amp; SMS Dispatch — {selectedSummary.member.fullName}
-              </h3>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                  WhatsApp &amp; SMS Dispatch — {selectedSummary.member.fullName}
+                </h3>
+                <BalanceStatusBadge direction={selectedSummary.balanceDirection} lang={lang} />
+              </div>
               <p className="text-xs text-slate-500">
-                Mobile: {selectedSummary.member.phone} · Select bilingual template below
+                Mobile: {selectedSummary.member.phone} · Closing Balance:{' '}
+                <span
+                  className={`font-mono font-bold ${
+                    getBalanceVisuals(selectedSummary.balanceDirection).amountTextClass
+                  }`}
+                >
+                  {formatCurrency(selectedSummary.absBalance)}
+                </span>
               </p>
             </div>
             <div className="flex items-center gap-2">

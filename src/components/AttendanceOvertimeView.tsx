@@ -1,13 +1,22 @@
 import React, { useMemo, useState } from 'react';
-import { Calendar, CheckCircle2, Clock, XCircle } from 'lucide-react';
+import { Calendar, CheckCircle2, Clock, SlidersHorizontal, XCircle } from 'lucide-react';
 import {
   formatCurrency,
+  formatHoursShort,
+  getAttendanceCode,
+  getAttendanceDayFactor,
   getMonthRange,
+  getStandardWorkHours,
   getWeekRange,
+  isPartialAttendance,
   safeNumber,
   todayISO,
 } from '../lib/accounting';
-import { saveOvertimeRecord, upsertAttendanceRecord } from '../lib/firestoreApi';
+import {
+  deleteOvertimeRecord,
+  saveOvertimeRecord,
+  upsertAttendanceRecord,
+} from '../lib/firestoreApi';
 import { TRANSLATIONS } from '../lib/i18n';
 import type {
   AppSettings,
@@ -37,18 +46,29 @@ export const AttendanceOvertimeView: React.FC<AttendanceOvertimeViewProps> = ({
   const t = TRANSLATIONS[lang];
   const today = todayISO();
   const [mode, setMode] = useState<'weekly' | 'monthly'>('weekly');
+  const [tapAction, setTapAction] = useState<'toggle' | 'hours'>('toggle');
   const [anchorDate, setAnchorDate] = useState(today);
   const [selectedMonth, setSelectedMonth] = useState(today.slice(0, 7)); // YYYY-MM
   const [bulkDate, setBulkDate] = useState(today);
   const [savingKey, setSavingKey] = useState<string | null>(null);
 
-  // Overtime Modal
-  const [otTarget, setOtTarget] = useState<{ member: Member; date: string } | null>(null);
-  const [otHours, setOtHours] = useState('2');
-  const [otRate, setOtRate] = useState('80');
-  const [otNotes, setOtNotes] = useState('');
+  // Unified Daily Work Hours (P1, P2, P) & Overtime Modal
+  const [cellTarget, setCellTarget] = useState<{ member: Member; date: string } | null>(null);
+  const [editStatus, setEditStatus] = useState<'P' | 'A'>('P');
+  const [editWorkHours, setEditWorkHours] = useState('8');
+  const [editOtHours, setEditOtHours] = useState('0');
+  const [editOtRate, setEditOtRate] = useState('80');
+  const [editNotes, setEditNotes] = useState('');
 
-  const standardHours = settings?.standardWorkHours || 8;
+  const standardHours = getStandardWorkHours(settings?.standardWorkHours);
+
+  const partialHourPresets = useMemo(() => {
+    const base = [1, 2, 3, 4, 6].filter((h) => h < standardHours);
+    if (base.length === 0 && standardHours > 1) {
+      return [Math.max(1, Math.floor(standardHours / 2))];
+    }
+    return base;
+  }, [standardHours]);
 
   const activeRange = useMemo(() => {
     if (mode === 'weekly') {
@@ -81,7 +101,36 @@ export const AttendanceOvertimeView: React.FC<AttendanceOvertimeViewProps> = ({
     return map;
   }, [overtime]);
 
+  const openCellEditor = (member: Member, date: string) => {
+    const key = `${member.memberId}_${date}`;
+    const existingAtt = attendanceMap.get(key);
+    const existingOt = otMap.get(key);
+
+    const status: 'P' | 'A' = existingAtt?.status === 'A' ? 'A' : 'P';
+    const workHrs =
+      existingAtt?.status === 'A'
+        ? 0
+        : existingAtt
+          ? safeNumber(existingAtt.workingHours, standardHours)
+          : standardHours;
+    const otHrs = existingOt
+      ? safeNumber(existingOt.hours, 0)
+      : safeNumber(existingAtt?.otHours, 0);
+
+    setCellTarget({ member, date });
+    setEditStatus(status);
+    setEditWorkHours(String(workHrs));
+    setEditOtHours(String(otHrs));
+    setEditOtRate(String(existingOt?.rate ?? member.otRate ?? settings?.defaultOtRate ?? 80));
+    setEditNotes(existingOt?.notes || existingAtt?.notes || '');
+  };
+
   const toggleCell = async (member: Member, date: string) => {
+    if (tapAction === 'hours') {
+      openCellEditor(member, date);
+      return;
+    }
+
     const key = `${member.memberId}_${date}`;
     const existing = attendanceMap.get(key);
     const nextStatus: 'P' | 'A' = existing?.status === 'P' ? 'A' : 'P';
@@ -119,7 +168,11 @@ export const AttendanceOvertimeView: React.FC<AttendanceOvertimeViewProps> = ({
           });
         })
       );
-      onToast(`Marked all ${activeMembers.length} active workers as ${status === 'P' ? 'Present' : 'Absent'} for ${bulkDate}.`);
+      onToast(
+        `Marked all ${activeMembers.length} active workers as ${
+          status === 'P' ? `Present (${standardHours}h)` : 'Absent'
+        } for ${bulkDate}.`
+      );
     } catch (err) {
       onToast(err instanceof Error ? err.message : 'Bulk update failed', 'error');
     } finally {
@@ -127,35 +180,84 @@ export const AttendanceOvertimeView: React.FC<AttendanceOvertimeViewProps> = ({
     }
   };
 
-  const openOtModal = (member: Member, date: string) => {
-    const existingOt = otMap.get(`${member.memberId}_${date}`);
-    setOtTarget({ member, date });
-    setOtHours(String(existingOt?.hours ?? 2));
-    setOtRate(String(existingOt?.rate ?? member.otRate ?? settings?.defaultOtRate ?? 80));
-    setOtNotes(existingOt?.notes || '');
-  };
-
-  const handleSaveOt = async (e: React.FormEvent) => {
+  const handleSaveCellEntry = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!otTarget) return;
-    setSavingKey('ot');
+    if (!cellTarget) return;
+
+    const parsedWork = Math.max(0, Math.min(24, Number(editWorkHours) || 0));
+    const parsedOt = Math.max(0, Math.min(24, Number(editOtHours) || 0));
+    const parsedOtRate = Math.max(0, Number(editOtRate) || 0);
+
+    // If marked Absent or 0 work hours with Absent selected
+    const finalStatus: 'P' | 'A' = editStatus === 'A' || parsedWork <= 0 ? 'A' : 'P';
+    const finalWorkHours = finalStatus === 'P' ? parsedWork : 0;
+
+    // If user typed work hours greater than standardHours without splitting OT, keep workHours capped or split?
+    // Pro-rata day pay caps regular work at 1 full day, so keep exact hours entered on record for visibility while salary factor caps at 1.0, OR split if user clicks auto-split.
+    const key = `${cellTarget.member.memberId}_${cellTarget.date}`;
+    const existingAtt = attendanceMap.get(key);
+    const existingOt = otMap.get(key);
+
+    setSavingKey('cell_modal');
     try {
-      await saveOvertimeRecord({
-        member: otTarget.member,
-        date: otTarget.date,
-        hours: Number(otHours) || 0,
-        rate: Number(otRate) || 0,
-        notes: otNotes,
-        existingId: otMap.get(`${otTarget.member.memberId}_${otTarget.date}`)?.recordId,
+      await upsertAttendanceRecord({
+        member: cellTarget.member,
+        date: cellTarget.date,
+        status: finalStatus,
+        workingHours: finalWorkHours,
+        otHours: parsedOt,
+        notes: editNotes,
+        existing: existingAtt,
       });
-      onToast(`Overtime saved for ${otTarget.member.fullName}.`);
-      setOtTarget(null);
+
+      if (parsedOt > 0) {
+        await saveOvertimeRecord({
+          member: cellTarget.member,
+          date: cellTarget.date,
+          hours: parsedOt,
+          rate: parsedOtRate,
+          notes: editNotes,
+          existingId: existingOt?.recordId,
+        });
+      } else if (existingOt) {
+        await deleteOvertimeRecord(existingOt);
+      }
+
+      const code = getAttendanceCode(
+        { status: finalStatus, workingHours: finalWorkHours },
+        standardHours
+      );
+      onToast(
+        `Saved ${cellTarget.member.fullName} (${cellTarget.date}): ${code}${
+          parsedOt > 0 ? ` + ${formatHoursShort(parsedOt)}h OT` : ''
+        }`
+      );
+      setCellTarget(null);
     } catch (err) {
-      onToast(err instanceof Error ? err.message : 'Failed to save overtime', 'error');
+      onToast(err instanceof Error ? err.message : 'Failed to save attendance hours', 'error');
     } finally {
       setSavingKey(null);
     }
   };
+
+  // Live preview calculations inside modal
+  const modalWorkNum = Math.max(0, Math.min(24, Number(editWorkHours) || 0));
+  const modalOtNum = Math.max(0, Math.min(24, Number(editOtHours) || 0));
+  const modalOtRateNum = Math.max(0, Number(editOtRate) || 0);
+  const modalFinalStatus: 'P' | 'A' = editStatus === 'A' || modalWorkNum <= 0 ? 'A' : 'P';
+  const modalPreviewCode = getAttendanceCode(
+    { status: modalFinalStatus, workingHours: modalFinalStatus === 'P' ? modalWorkNum : 0 },
+    standardHours
+  );
+  const modalDayFactor = getAttendanceDayFactor(
+    { status: modalFinalStatus, workingHours: modalFinalStatus === 'P' ? modalWorkNum : 0 },
+    standardHours
+  );
+  const modalBaseWage = cellTarget
+    ? Math.round(modalDayFactor * safeNumber(cellTarget.member.dailySalaryRate) * 100) / 100
+    : 0;
+  const modalOtWage = Math.round(modalOtNum * modalOtRateNum * 100) / 100;
+  const modalTotalWage = Math.round((modalBaseWage + modalOtWage) * 100) / 100;
 
   return (
     <div className="space-y-6">
@@ -166,7 +268,7 @@ export const AttendanceOvertimeView: React.FC<AttendanceOvertimeViewProps> = ({
             {t.attendance} &amp; Overtime
           </h2>
           <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-            Standard shift: {standardHours}h/day · Period: {activeRange.startDate} to {activeRange.endDate} ({activeRange.days.length} days)
+            Standard shift: {standardHours}h/day · Partial hours show as P1, P2, etc. · Period: {activeRange.startDate} to {activeRange.endDate} ({activeRange.days.length} days)
           </p>
         </div>
 
@@ -214,11 +316,11 @@ export const AttendanceOvertimeView: React.FC<AttendanceOvertimeViewProps> = ({
         </div>
       </div>
 
-      {/* Bulk Daily Attendance Bar */}
+      {/* Bulk Daily Attendance + Cell Tap Mode Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900">
-        <div className="flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300">
+        <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300">
           <Calendar className="h-4 w-4 text-[#0B1F3A] dark:text-emerald-400" />
-          <span>Quick Bulk Mark for Date:</span>
+          <span>Quick Bulk Date:</span>
           <input
             type="date"
             value={bulkDate}
@@ -226,7 +328,35 @@ export const AttendanceOvertimeView: React.FC<AttendanceOvertimeViewProps> = ({
             className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-white"
           />
         </div>
-        <div className="flex items-center gap-2">
+
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Cell Tap Action Mode Switch */}
+          <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1 dark:border-slate-700 dark:bg-slate-800">
+            <button
+              type="button"
+              onClick={() => setTapAction('toggle')}
+              className={`rounded-md px-2.5 py-1.5 text-[11px] font-semibold transition ${
+                tapAction === 'toggle'
+                  ? 'bg-[#0B1F3A] text-white'
+                  : 'text-slate-600 dark:text-slate-300'
+              }`}
+            >
+              Tap: Quick P/A
+            </button>
+            <button
+              type="button"
+              onClick={() => setTapAction('hours')}
+              className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-[11px] font-semibold transition ${
+                tapAction === 'hours'
+                  ? 'bg-sky-600 text-white'
+                  : 'text-slate-600 dark:text-slate-300'
+              }`}
+            >
+              <SlidersHorizontal className="h-3 w-3" />
+              <span>Tap: Hours (P1, P2, OT)</span>
+            </button>
+          </div>
+
           <button
             type="button"
             disabled={savingKey === 'bulk'}
@@ -234,7 +364,7 @@ export const AttendanceOvertimeView: React.FC<AttendanceOvertimeViewProps> = ({
             className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50 min-h-[38px]"
           >
             <CheckCircle2 className="h-3.5 w-3.5" />
-            <span>Mark All Present (P)</span>
+            <span>Mark All P ({standardHours}h)</span>
           </button>
           <button
             type="button"
@@ -243,9 +373,26 @@ export const AttendanceOvertimeView: React.FC<AttendanceOvertimeViewProps> = ({
             className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3.5 py-2 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300 min-h-[38px]"
           >
             <XCircle className="h-3.5 w-3.5" />
-            <span>Mark All Absent (A)</span>
+            <span>Mark All A</span>
           </button>
         </div>
+      </div>
+
+      {/* Attendance Legend */}
+      <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-600 dark:text-slate-400">
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-flex h-5 w-6 items-center justify-center rounded bg-emerald-600 font-mono text-[10px] font-bold text-white">P</span>
+          Full Day ({standardHours}h)
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-flex h-5 w-7 items-center justify-center rounded bg-sky-600 font-mono text-[10px] font-bold text-white">P2</span>
+          Partial Hours (Pro-rata Salary)
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-flex h-5 w-6 items-center justify-center rounded bg-red-100 font-mono text-[10px] font-bold text-red-700 dark:bg-red-950/60 dark:text-red-300">A</span>
+          Absent (0h)
+        </span>
+        <span className="text-slate-400">· Switch to &ldquo;Tap: Hours (P1, P2, OT)&rdquo; or right-click any cell to enter custom work hours &amp; overtime.</span>
       </div>
 
       {/* Attendance Matrix Table */}
@@ -259,18 +406,18 @@ export const AttendanceOvertimeView: React.FC<AttendanceOvertimeViewProps> = ({
             <table className="w-full border-collapse text-left text-xs">
               <thead className="border-b border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-300">
                 <tr>
-                  <th className="sticky left-0 z-10 bg-slate-50 px-4 py-3 font-bold dark:bg-slate-900 min-w-[170px]">
+                  <th className="sticky left-0 z-10 bg-slate-50 px-4 py-3 font-bold dark:bg-slate-900 min-w-[180px]">
                     Worker
                   </th>
                   {activeRange.days.map((day) => (
-                    <th key={day} className="px-1.5 py-3 text-center font-mono min-w-[44px]">
+                    <th key={day} className="px-1.5 py-3 text-center font-mono min-w-[46px]">
                       <div>{day.slice(8)}</div>
                       <div className="text-[10px] font-normal text-slate-400">
                         {new Date(`${day}T00:00:00`).toLocaleDateString('en-US', { weekday: 'narrow' })}
                       </div>
                     </th>
                   ))}
-                  <th className="px-3 py-3 text-right font-bold">P / A</th>
+                  <th className="px-3 py-3 text-right font-bold whitespace-nowrap">P (Eq) / A</th>
                   <th className="px-3 py-3 text-right font-bold">%</th>
                   <th className="px-3 py-3 text-right font-bold">OT Hrs</th>
                   <th className="px-4 py-3 text-right font-bold">Combined Pay</th>
@@ -278,15 +425,27 @@ export const AttendanceOvertimeView: React.FC<AttendanceOvertimeViewProps> = ({
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {activeMembers.map((m) => {
-                  let presentDays = 0;
+                  let rawPresentDays = 0;
                   let absentDays = 0;
+                  let markedDays = 0;
+                  let totalWorkHours = 0;
                   let totalOtHours = 0;
                   let totalOtPay = 0;
 
                   activeRange.days.forEach((day) => {
                     const rec = attendanceMap.get(`${m.memberId}_${day}`);
-                    if (rec?.status === 'P') presentDays += 1;
-                    if (rec?.status === 'A') absentDays += 1;
+                    if (rec) {
+                      markedDays += 1;
+                      const factor = getAttendanceDayFactor(rec, standardHours);
+                      rawPresentDays += factor;
+                      if (rec.status === 'P') {
+                        totalWorkHours += safeNumber(rec.workingHours, standardHours);
+                      }
+                      if (rec.status === 'A' || (rec.status === 'P' && factor === 0)) {
+                        absentDays += 1;
+                      }
+                    }
+
                     const ot = otMap.get(`${m.memberId}_${day}`);
                     if (ot) {
                       totalOtHours += safeNumber(ot.hours);
@@ -298,10 +457,10 @@ export const AttendanceOvertimeView: React.FC<AttendanceOvertimeViewProps> = ({
                     }
                   });
 
-                  const marked = presentDays + absentDays;
-                  const pct = marked > 0 ? Math.round((presentDays / marked) * 100) : 0;
-                  const normalSalary = presentDays * safeNumber(m.dailySalaryRate);
-                  const combined = normalSalary + totalOtPay;
+                  const presentEq = Math.round(rawPresentDays * 100) / 100;
+                  const pct = markedDays > 0 ? Math.min(100, Math.round((rawPresentDays / markedDays) * 100)) : 0;
+                  const normalSalary = Math.round(rawPresentDays * safeNumber(m.dailySalaryRate) * 100) / 100;
+                  const combined = Math.round((normalSalary + totalOtPay) * 100) / 100;
 
                   return (
                     <tr key={m.memberId} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40">
@@ -317,12 +476,12 @@ export const AttendanceOvertimeView: React.FC<AttendanceOvertimeViewProps> = ({
                           </div>
                           <button
                             type="button"
-                            onClick={() => openOtModal(m, bulkDate)}
-                            title="Log Overtime"
+                            onClick={() => openCellEditor(m, bulkDate)}
+                            title="Edit Work Hours (P1/P2) & Overtime"
                             className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 shrink-0"
                           >
                             <Clock className="h-3 w-3 text-emerald-600" />
-                            <span>OT</span>
+                            <span>Hrs/OT</span>
                           </button>
                         </div>
                       </td>
@@ -330,25 +489,37 @@ export const AttendanceOvertimeView: React.FC<AttendanceOvertimeViewProps> = ({
                         const key = `${m.memberId}_${day}`;
                         const rec = attendanceMap.get(key);
                         const ot = otMap.get(key);
-                        const status = rec?.status;
+                        const otHoursVal = ot ? safeNumber(ot.hours, 0) : safeNumber(rec?.otHours, 0);
+                        const code = getAttendanceCode(rec, standardHours);
+                        const partial = isPartialAttendance(rec, standardHours);
+
                         return (
                           <td key={day} className="px-1 py-2 text-center">
                             <button
                               type="button"
                               disabled={savingKey === key}
                               onClick={() => toggleCell(m, day)}
-                              className={`relative inline-flex h-9 w-9 items-center justify-center rounded-lg font-mono text-xs font-bold transition ${
-                                status === 'P'
-                                  ? 'bg-emerald-600 text-white hover:bg-emerald-700'
-                                  : status === 'A'
-                                    ? 'bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-950/60 dark:text-red-300'
-                                    : 'border border-slate-200 bg-slate-50 text-slate-400 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800'
+                              onContextMenu={(e) => {
+                                e.preventDefault();
+                                openCellEditor(m, day);
+                              }}
+                              title={`${m.fullName} (${day}): ${
+                                rec ? `${code} · ${safeNumber(rec.workingHours, standardHours)}h work` : 'Unmarked'
+                              }${otHoursVal > 0 ? ` + ${otHoursVal}h OT` : ''}`}
+                              className={`relative inline-flex h-9 min-w-[36px] px-1 items-center justify-center rounded-lg font-mono text-[11px] font-bold transition ${
+                                partial
+                                  ? 'bg-sky-600 text-white hover:bg-sky-700'
+                                  : code === 'P'
+                                    ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                                    : code === 'A'
+                                      ? 'bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-950/60 dark:text-red-300'
+                                      : 'border border-slate-200 bg-slate-50 text-slate-400 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800'
                               }`}
                             >
-                              {status || '·'}
-                              {ot && ot.hours > 0 && (
+                              {code}
+                              {otHoursVal > 0 && (
                                 <span className="absolute -right-1 -top-1 rounded bg-[#0B1F3A] px-1 text-[9px] text-white">
-                                  +{ot.hours}
+                                  +{formatHoursShort(otHoursVal)}
                                 </span>
                               )}
                             </button>
@@ -356,15 +527,20 @@ export const AttendanceOvertimeView: React.FC<AttendanceOvertimeViewProps> = ({
                         );
                       })}
                       <td className="px-3 py-2 text-right font-mono tabular-nums whitespace-nowrap">
-                        <span className="font-bold text-emerald-600">{presentDays}</span>
-                        {' / '}
-                        <span className="text-red-600">{absentDays}</span>
+                        <div>
+                          <span className="font-bold text-emerald-600">{presentEq}</span>
+                          {' / '}
+                          <span className="text-red-600">{absentDays}</span>
+                        </div>
+                        <div className="text-[10px] text-slate-400">
+                          {formatHoursShort(totalWorkHours)}h work
+                        </div>
                       </td>
                       <td className="px-3 py-2 text-right font-mono tabular-nums">
                         {pct}%
                       </td>
                       <td className="px-3 py-2 text-right font-mono tabular-nums">
-                        {totalOtHours}h
+                        {formatHoursShort(totalOtHours)}h
                       </td>
                       <td className="px-4 py-2 text-right font-mono font-bold tabular-nums text-[#0B1F3A] dark:text-white whitespace-nowrap">
                         {formatCurrency(combined)}
@@ -378,14 +554,19 @@ export const AttendanceOvertimeView: React.FC<AttendanceOvertimeViewProps> = ({
         )}
       </div>
 
-      {/* Overtime Entry Modal */}
-      {otTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-slate-800 dark:bg-slate-900">
+      {/* Unified Work Hours (P / P1 / P2 / A) & Overtime Modal */}
+      {cellTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm overflow-y-auto">
+          <div className="my-6 w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-slate-800 dark:bg-slate-900">
             <h3 className="font-display text-lg font-bold text-slate-900 dark:text-white">
-              Overtime Entry — {otTarget.member.fullName}
+              Hours &amp; Overtime — {cellTarget.member.fullName}
             </h3>
-            <form onSubmit={handleSaveOt} className="mt-4 space-y-4">
+            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+              Daily Rate: {formatCurrency(cellTarget.member.dailySalaryRate)} / {standardHours}h shift (
+              {formatCurrency(safeNumber(cellTarget.member.dailySalaryRate) / standardHours)}/hr)
+            </p>
+
+            <form onSubmit={handleSaveCellEntry} className="mt-4 space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
                   Date
@@ -393,12 +574,91 @@ export const AttendanceOvertimeView: React.FC<AttendanceOvertimeViewProps> = ({
                 <input
                   type="date"
                   required
-                  value={otTarget.date}
-                  onChange={(e) => setOtTarget({ ...otTarget, date: e.target.value })}
+                  value={cellTarget.date}
+                  onChange={(e) => {
+                    const nextDate = e.target.value || today;
+                    openCellEditor(cellTarget.member, nextDate);
+                  }}
                   className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                 />
               </div>
-              <div className="grid grid-cols-2 gap-3">
+
+              {/* Quick Attendance & Partial-Hour Buttons */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Quick Select Attendance / Partial Hours
+                </label>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditStatus('P');
+                      setEditWorkHours(String(standardHours));
+                    }}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                      editStatus === 'P' && Number(editWorkHours) >= standardHours
+                        ? 'bg-emerald-600 text-white'
+                        : 'border border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200'
+                    }`}
+                  >
+                    Full P ({standardHours}h)
+                  </button>
+
+                  {partialHourPresets.map((hrs) => (
+                    <button
+                      key={hrs}
+                      type="button"
+                      onClick={() => {
+                        setEditStatus('P');
+                        setEditWorkHours(String(hrs));
+                      }}
+                      className={`rounded-lg px-2.5 py-1.5 font-mono text-xs font-bold transition ${
+                        editStatus === 'P' && Number(editWorkHours) === hrs
+                          ? 'bg-sky-600 text-white'
+                          : 'border border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200'
+                      }`}
+                    >
+                      P{hrs} ({hrs}h)
+                    </button>
+                  ))}
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditStatus('A');
+                      setEditWorkHours('0');
+                    }}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                      editStatus === 'A' || Number(editWorkHours) <= 0
+                        ? 'bg-red-600 text-white'
+                        : 'border border-red-200 bg-red-50 text-red-700 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300'
+                    }`}
+                  >
+                    Absent (A)
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                    Work Hrs
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="24"
+                    step="0.5"
+                    required
+                    value={editWorkHours}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setEditWorkHours(val);
+                      setEditStatus((Number(val) || 0) > 0 ? 'P' : 'A');
+                    }}
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  />
+                </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
                     OT Hours
@@ -409,55 +669,101 @@ export const AttendanceOvertimeView: React.FC<AttendanceOvertimeViewProps> = ({
                     max="24"
                     step="0.5"
                     required
-                    value={otHours}
-                    onChange={(e) => setOtHours(e.target.value)}
+                    value={editOtHours}
+                    onChange={(e) => setEditOtHours(e.target.value)}
                     className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                   />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                    OT Rate (₹/hr)
+                    OT ₹/hr
                   </label>
                   <input
                     type="number"
                     min="0"
                     step="any"
                     required
-                    value={otRate}
-                    onChange={(e) => setOtRate(e.target.value)}
+                    value={editOtRate}
+                    onChange={(e) => setEditOtRate(e.target.value)}
                     className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                   />
                 </div>
               </div>
-              <div className="rounded-xl bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
-                OT Amount: {formatCurrency((Number(otHours) || 0) * (Number(otRate) || 0))}
+
+              {modalWorkNum > standardHours && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const extraOt = Math.round((modalWorkNum - standardHours) * 100) / 100;
+                    setEditWorkHours(String(standardHours));
+                    setEditOtHours(String(Math.round((modalOtNum + extraOt) * 100) / 100));
+                  }}
+                  className="w-full rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-left text-[11px] font-semibold text-sky-800 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-300"
+                >
+                  Work hours exceed {standardHours}h shift. Tap to split extra{' '}
+                  {formatHoursShort(modalWorkNum - standardHours)}h into Overtime (OT).
+                </button>
+              )}
+
+              {/* Live Pay & Code Preview */}
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 text-xs dark:border-slate-800 dark:bg-slate-800/50">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-slate-600 dark:text-slate-300">
+                    Recorded Code:
+                  </span>
+                  <span
+                    className={`rounded-md px-2 py-0.5 font-mono font-bold ${
+                      modalPreviewCode === 'A'
+                        ? 'bg-red-100 text-red-700 dark:bg-red-950/60 dark:text-red-300'
+                        : modalPreviewCode === 'P'
+                          ? 'bg-emerald-600 text-white'
+                          : 'bg-sky-600 text-white'
+                    }`}
+                  >
+                    {modalPreviewCode} ({Math.round(modalDayFactor * 100) / 100}d)
+                  </span>
+                </div>
+                <div className="mt-2 flex items-center justify-between text-slate-600 dark:text-slate-300">
+                  <span>Base Wage ({formatHoursShort(modalFinalStatus === 'P' ? Math.min(modalWorkNum, standardHours) : 0)}h/{standardHours}h):</span>
+                  <span className="font-mono font-semibold">{formatCurrency(modalBaseWage)}</span>
+                </div>
+                <div className="mt-1 flex items-center justify-between text-slate-600 dark:text-slate-300">
+                  <span>OT Wage ({formatHoursShort(modalOtNum)}h × {formatCurrency(modalOtRateNum)}):</span>
+                  <span className="font-mono font-semibold">{formatCurrency(modalOtWage)}</span>
+                </div>
+                <div className="mt-2 flex items-center justify-between border-t border-slate-200 pt-2 font-bold text-[#0B1F3A] dark:border-slate-700 dark:text-white">
+                  <span>Day Total:</span>
+                  <span className="font-mono">{formatCurrency(modalTotalWage)}</span>
+                </div>
               </div>
+
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
                   Notes
                 </label>
                 <input
                   type="text"
-                  value={otNotes}
-                  onChange={(e) => setOtNotes(e.target.value)}
-                  placeholder="Optional reason or task"
+                  value={editNotes}
+                  onChange={(e) => setEditNotes(e.target.value)}
+                  placeholder="Optional half-day / task / OT note"
                   className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                 />
               </div>
+
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => setOtTarget(null)}
+                  onClick={() => setCellTarget(null)}
                   className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-medium dark:border-slate-700"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  disabled={savingKey === 'ot'}
-                  className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700"
+                  disabled={savingKey === 'cell_modal'}
+                  className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
                 >
-                  Save OT
+                  {savingKey === 'cell_modal' ? 'Saving...' : 'Save Attendance & OT'}
                 </button>
               </div>
             </form>

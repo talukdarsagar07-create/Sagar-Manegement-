@@ -22,8 +22,26 @@
   font-variant-numeric: tabular-nums;
 }
 
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
 .pb-safe {
   padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.header-safe {
+  padding-top: calc(0.75rem + env(safe-area-inset-top, 0px));
+  padding-bottom: 0.75rem;
+}
+
+.drawer-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.top-toast-safe {
+  top: calc(env(safe-area-inset-top, 0px) + 4.25rem);
 }
 
 @media print {

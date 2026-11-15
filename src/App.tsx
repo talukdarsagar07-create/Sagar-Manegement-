@@ -735,7 +735,7 @@ export default function App() {
       {/* Main Content Wrapper */}
       <div className="flex flex-1 flex-col lg:pl-64 pb-20 lg:pb-0 min-w-0">
         {/* Top Bar */}
-        <header className="sticky top-0 z-30 flex items-center justify-between gap-4 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur-md sm:px-6 dark:border-slate-800 dark:bg-slate-900/95">
+        <header className="sticky top-0 z-30 flex items-center justify-between gap-4 border-b border-slate-200 bg-white/95 px-4 header-safe backdrop-blur-md sm:px-6 dark:border-slate-800 dark:bg-slate-900/95">
           <div className="flex items-center gap-3 min-w-0">
             <button
               type="button"
@@ -780,6 +780,7 @@ export default function App() {
               overtime={overtime}
               advances={advances}
               payments={payments}
+              settings={settings}
               onNavigate={(tab) => setActiveTab(tab as AdminTab)}
             />
           )}
@@ -815,6 +816,7 @@ export default function App() {
               advances={advances}
               payments={payments}
               slips={slips}
+              settings={settings}
               onToast={showToast}
             />
           )}
@@ -826,6 +828,7 @@ export default function App() {
               overtime={overtime}
               advances={advances}
               payments={payments}
+              settings={settings}
               onToast={showToast}
             />
           )}
@@ -872,7 +875,7 @@ export default function App() {
       {mobileMenuOpen && (
         <div className="fixed inset-0 z-50 flex lg:hidden">
           <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm" onClick={() => setMobileMenuOpen(false)} />
-          <div className="relative z-10 flex w-72 flex-col bg-[#0B1F3A] text-white">
+          <div className="relative z-10 flex w-72 flex-col bg-[#0B1F3A] text-white drawer-safe">
             <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
               <div className="flex items-center gap-3">
                 <img src={logoUrl} alt="Logo" className="h-9 w-9 rounded-lg object-cover" />
@@ -947,7 +950,7 @@ export default function App() {
       {/* Toast Notification */}
       {toast && (
         <div
-          className={`fixed right-4 top-16 z-50 max-w-sm rounded-xl px-4 py-3 text-xs font-semibold text-white shadow-lg ${
+          className={`fixed right-4 top-toast-safe z-50 max-w-sm rounded-xl px-4 py-3 text-xs font-semibold text-white shadow-lg ${
             toast.type === 'error' ? 'bg-red-600' : 'bg-emerald-600'
           }`}
         >

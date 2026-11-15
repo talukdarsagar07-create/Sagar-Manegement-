@@ -11,19 +11,23 @@ import {
 import {
   computeMemberFinancialSummary,
   formatCurrency,
+  getBalanceVisuals,
   getMonthRange,
+  getStandardWorkHours,
   getWeekRange,
   todayISO,
 } from '../lib/accounting';
 import { TRANSLATIONS } from '../lib/i18n';
 import type {
   AdvanceTransaction,
+  AppSettings,
   AttendanceRecord,
   Language,
   Member,
   OvertimeRecord,
   PaymentTransaction,
 } from '../types';
+import { BalanceStatusBadge } from './BalanceStatusBadge';
 
 interface AdminDashboardViewProps {
   lang: Language;
@@ -32,6 +36,7 @@ interface AdminDashboardViewProps {
   overtime: OvertimeRecord[];
   advances: AdvanceTransaction[];
   payments: PaymentTransaction[];
+  settings: AppSettings | null;
   onNavigate: (tab: string) => void;
 }
 
@@ -42,8 +47,10 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   overtime,
   advances,
   payments,
+  settings,
   onNavigate,
 }) => {
+  const stdHours = getStandardWorkHours(settings?.standardWorkHours);
   const t = TRANSLATIONS[lang];
   const today = todayISO();
   const weekRange = useMemo(() => getWeekRange(today), [today]);
@@ -68,15 +75,39 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     let outstandingAdminBalances = 0; // admin owes member
 
     const memberSummaries = members.map((m) => {
-      const weekSum = computeMemberFinancialSummary(m, attendance, overtime, advances, payments, {
-        startDate: weekRange.startDate,
-        endDate: weekRange.endDate,
-      });
-      const monthSum = computeMemberFinancialSummary(m, attendance, overtime, advances, payments, {
-        startDate: monthRange.startDate,
-        endDate: monthRange.endDate,
-      });
-      const lifeSum = computeMemberFinancialSummary(m, attendance, overtime, advances, payments);
+      const weekSum = computeMemberFinancialSummary(
+        m,
+        attendance,
+        overtime,
+        advances,
+        payments,
+        {
+          startDate: weekRange.startDate,
+          endDate: weekRange.endDate,
+        },
+        stdHours
+      );
+      const monthSum = computeMemberFinancialSummary(
+        m,
+        attendance,
+        overtime,
+        advances,
+        payments,
+        {
+          startDate: monthRange.startDate,
+          endDate: monthRange.endDate,
+        },
+        stdHours
+      );
+      const lifeSum = computeMemberFinancialSummary(
+        m,
+        attendance,
+        overtime,
+        advances,
+        payments,
+        undefined,
+        stdHours
+      );
 
       weeklySalaryTotal += weekSum.grossEarned;
       monthlySalaryTotal += monthSum.grossEarned;
@@ -118,7 +149,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
       memberSummaries,
       weeklyChart,
     };
-  }, [members, attendance, overtime, advances, payments, today, weekRange, monthRange]);
+  }, [members, attendance, overtime, advances, payments, today, weekRange, monthRange, stdHours]);
 
   const maxChartDay = Math.max(1, ...stats.weeklyChart.map((d) => d.present + d.absent));
   const maxFinancialBar = Math.max(
@@ -364,39 +395,36 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {stats.memberSummaries.slice(0, 8).map((s) => (
-                  <tr key={s.member.memberId} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40">
-                    <td className="px-5 py-3">
-                      <p className="font-semibold text-slate-900 dark:text-white">{s.member.fullName}</p>
-                      <p className="text-xs text-slate-500">
-                        {s.member.memberCode} · {s.member.phone}
-                      </p>
-                    </td>
-                    <td className="px-4 py-3 text-right font-mono tabular-nums text-slate-700 dark:text-slate-300">
-                      {s.presentDays}d
-                    </td>
-                    <td className="px-4 py-3 text-right font-mono tabular-nums text-slate-700 dark:text-slate-300">
-                      {formatCurrency(s.grossEarned)}
-                    </td>
-                    <td className="px-4 py-3 text-right font-mono tabular-nums text-amber-600 dark:text-amber-400">
-                      {formatCurrency(s.totalAdvanceOutstanding)}
-                    </td>
-                    <td className="px-5 py-3 text-right">
-                      <p
-                        className={`font-mono font-bold tabular-nums ${
-                          s.balanceDirection === 'YOU OWE MEMBER'
-                            ? 'text-emerald-600 dark:text-emerald-400'
-                            : s.balanceDirection === 'MEMBER OWES YOU'
-                              ? 'text-red-600 dark:text-red-400'
-                              : 'text-slate-500'
-                        }`}
-                      >
-                        {formatCurrency(s.absBalance)}
-                      </p>
-                      <p className="text-[11px] font-medium text-slate-500">{s.balanceDirection}</p>
-                    </td>
-                  </tr>
-                ))}
+                {stats.memberSummaries.slice(0, 8).map((s) => {
+                  const balVisual = getBalanceVisuals(s.balanceDirection);
+                  return (
+                    <tr key={s.member.memberId} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40">
+                      <td className="px-5 py-3">
+                        <p className="font-semibold text-slate-900 dark:text-white">{s.member.fullName}</p>
+                        <p className="text-xs text-slate-500">
+                          {s.member.memberCode} · {s.member.phone}
+                        </p>
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                        {s.presentDays}d
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                        {formatCurrency(s.grossEarned)}
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono tabular-nums text-amber-600 dark:text-amber-400">
+                        {formatCurrency(s.totalAdvanceOutstanding)}
+                      </td>
+                      <td className="px-5 py-3 text-right">
+                        <p className={`font-mono font-bold tabular-nums ${balVisual.amountTextClass}`}>
+                          {formatCurrency(s.absBalance)}
+                        </p>
+                        <div className="mt-1 flex justify-end">
+                          <BalanceStatusBadge direction={s.balanceDirection} lang={lang} />
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

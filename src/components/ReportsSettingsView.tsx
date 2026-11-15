@@ -15,7 +15,9 @@ import {
 import {
   computeMemberFinancialSummary,
   formatCurrency,
+  getAttendanceCode,
   getMonthRange,
+  getStandardWorkHours,
   getWeekRange,
   todayISO,
 } from '../lib/accounting';
@@ -135,6 +137,8 @@ export const ReportsSettingsView: React.FC<ReportsSettingsViewProps> = ({
 
   const memberMap = useMemo(() => new Map(members.map((m) => [m.memberId, m])), [members]);
 
+  const stdHours = getStandardWorkHours(settings?.standardWorkHours);
+
   const reportPayload = useMemo(() => {
     if (reportType === 'daily') {
       const headers = ['Member ID', 'Name', 'Date', 'Status', 'Work Hrs', 'OT Hrs'];
@@ -144,7 +148,7 @@ export const ReportsSettingsView: React.FC<ReportsSettingsViewProps> = ({
           m.memberCode,
           m.fullName,
           reportDate,
-          rec?.status || 'Unmarked',
+          rec ? getAttendanceCode(rec, stdHours) : 'Unmarked',
           rec?.workingHours ?? 0,
           rec?.otHours ?? 0,
         ];
@@ -163,7 +167,7 @@ export const ReportsSettingsView: React.FC<ReportsSettingsViewProps> = ({
       const headers = [
         'ID',
         'Name',
-        'Present',
+        'Present (Eq)',
         'Absent',
         'OT Hrs',
         'Base Salary',
@@ -175,10 +179,18 @@ export const ReportsSettingsView: React.FC<ReportsSettingsViewProps> = ({
         'Status',
       ];
       const rows = members.map((m) => {
-        const s = computeMemberFinancialSummary(m, attendance, overtime, advances, payments, {
-          startDate: range.startDate,
-          endDate: range.endDate,
-        });
+        const s = computeMemberFinancialSummary(
+          m,
+          attendance,
+          overtime,
+          advances,
+          payments,
+          {
+            startDate: range.startDate,
+            endDate: range.endDate,
+          },
+          stdHours
+        );
         return [
           m.memberCode,
           m.fullName,
@@ -204,15 +216,24 @@ export const ReportsSettingsView: React.FC<ReportsSettingsViewProps> = ({
     if (reportType === 'individual') {
       const m = memberMap.get(selectedMemberId) || members[0];
       if (!m) return { title: 'Individual Member Report', headers: ['Info'], rows: [['No member selected']] };
-      const s = computeMemberFinancialSummary(m, attendance, overtime, advances, payments);
+      const s = computeMemberFinancialSummary(
+        m,
+        attendance,
+        overtime,
+        advances,
+        payments,
+        undefined,
+        stdHours
+      );
       const headers = ['Metric', 'Value'];
       const rows: (string | number)[][] = [
         ['Member Name', m.fullName],
         ['Member ID', m.memberCode],
         ['Mobile', m.phone],
-        ['Present Days', s.presentDays],
+        ['Present Days (Eq)', s.presentDays],
         ['Absent Days', s.absentDays],
         ['Attendance %', `${s.attendancePercent}%`],
+        ['Total Work Hours', s.workingHours],
         ['Total OT Hours', s.otHours],
         ['Total Salary Earned', s.totalSalaryEarned],
         ['Total OT Earned', s.totalOtEarned],
@@ -233,7 +254,7 @@ export const ReportsSettingsView: React.FC<ReportsSettingsViewProps> = ({
           a.date,
           memberMap.get(a.memberId)?.memberCode || a.memberId,
           memberMap.get(a.memberId)?.fullName || a.memberId,
-          a.status,
+          getAttendanceCode(a, stdHours),
           a.workingHours,
           a.otHours,
         ]);
@@ -271,7 +292,7 @@ export const ReportsSettingsView: React.FC<ReportsSettingsViewProps> = ({
         p.amount,
       ]);
     return { title: 'Payment Ledger Report', headers, rows };
-  }, [reportType, reportDate, selectedMemberId, members, attendance, overtime, advances, payments, memberMap]);
+  }, [reportType, reportDate, selectedMemberId, members, attendance, overtime, advances, payments, memberMap, stdHours]);
 
   const handleQrUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];

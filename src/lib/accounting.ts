@@ -111,14 +111,99 @@ export function resolveBalanceDirection(rawNetBalance: number): BalanceDirection
   return 'ALL SETTLED';
 }
 
+export function getBalanceVisuals(direction: BalanceDirection) {
+  if (direction === 'YOU OWE MEMBER') {
+    return {
+      amountTextClass: 'text-emerald-600 dark:text-emerald-400',
+      badgeClass:
+        'border-emerald-200 bg-emerald-100 text-emerald-800 dark:border-emerald-800/70 dark:bg-emerald-950/60 dark:text-emerald-300',
+      bannerClass:
+        'border-emerald-200 bg-emerald-50 dark:border-emerald-900/50 dark:bg-emerald-950/30',
+      dotClass: 'bg-emerald-600 dark:bg-emerald-400',
+    };
+  }
+  if (direction === 'MEMBER OWES YOU') {
+    return {
+      amountTextClass: 'text-red-600 dark:text-red-400',
+      badgeClass:
+        'border-red-200 bg-red-100 text-red-800 dark:border-red-800/70 dark:bg-red-950/60 dark:text-red-300',
+      bannerClass:
+        'border-red-200 bg-red-50 dark:border-red-900/50 dark:bg-red-950/30',
+      dotClass: 'bg-red-600 dark:bg-red-400',
+    };
+  }
+  return {
+    amountTextClass: 'text-slate-600 dark:text-slate-300',
+    badgeClass:
+      'border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300',
+    bannerClass:
+      'border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900',
+    dotClass: 'bg-slate-500',
+  };
+}
+
+export function getStandardWorkHours(standardWorkHours?: number | null): number {
+  const num = Number(standardWorkHours);
+  return Number.isFinite(num) && num > 0 ? num : 8;
+}
+
+export function formatHoursShort(hours: number): string {
+  const rounded = Math.round(safeNumber(hours, 0) * 100) / 100;
+  return Number.isInteger(rounded) ? String(rounded) : String(rounded);
+}
+
+export function getAttendanceDayFactor(
+  record: Pick<AttendanceRecord, 'status' | 'workingHours'> | undefined,
+  standardWorkHours = 8
+): number {
+  if (!record || record.status !== 'P') return 0;
+  const std = getStandardWorkHours(standardWorkHours);
+  if (record.workingHours === undefined || record.workingHours === null) {
+    return 1;
+  }
+  const hrs = safeNumber(record.workingHours, std);
+  if (hrs <= 0) return 0;
+  if (hrs >= std) return 1;
+  return hrs / std;
+}
+
+export function isPartialAttendance(
+  record: Pick<AttendanceRecord, 'status' | 'workingHours'> | undefined,
+  standardWorkHours = 8
+): boolean {
+  if (!record || record.status !== 'P') return false;
+  const std = getStandardWorkHours(standardWorkHours);
+  if (record.workingHours === undefined || record.workingHours === null) return false;
+  const hrs = safeNumber(record.workingHours, std);
+  return hrs > 0 && hrs < std;
+}
+
+export function getAttendanceCode(
+  record: Pick<AttendanceRecord, 'status' | 'workingHours'> | undefined,
+  standardWorkHours = 8
+): string {
+  if (!record) return '·';
+  if (record.status === 'A') return 'A';
+  const std = getStandardWorkHours(standardWorkHours);
+  if (record.workingHours === undefined || record.workingHours === null) return 'P';
+  const hrs = safeNumber(record.workingHours, std);
+  if (hrs > 0 && hrs < std) {
+    return `P${formatHoursShort(hrs)}`;
+  }
+  if (hrs <= 0) return 'A';
+  return 'P';
+}
+
 export function computeMemberFinancialSummary(
   member: Member,
   allAttendance: AttendanceRecord[],
   allOvertime: OvertimeRecord[],
   allAdvances: AdvanceTransaction[],
   allPayments: PaymentTransaction[],
-  dateRange?: { startDate: string; endDate: string }
+  dateRange?: { startDate: string; endDate: string },
+  standardWorkHours = 8
 ): MemberFinancialSummary {
+  const stdHours = getStandardWorkHours(standardWorkHours);
   const hasValidRange =
     Boolean(dateRange?.startDate) &&
     Boolean(dateRange?.endDate) &&
@@ -131,14 +216,26 @@ export function computeMemberFinancialSummary(
   const memberAdv = allAdvances.filter((a) => a.memberId === member.memberId && inRange(a.date));
   const memberPay = allPayments.filter((p) => p.memberId === member.memberId && p.verified && inRange(p.date));
 
-  const presentDays = memberAtt.filter((a) => a.status === 'P').length;
-  const absentDays = memberAtt.filter((a) => a.status === 'A').length;
-  const totalMarkedDays = presentDays + absentDays;
-  const attendancePercent = totalMarkedDays > 0 ? Math.round((presentDays / totalMarkedDays) * 1000) / 10 : 0;
+  const rawEquivalentPresentDays = memberAtt.reduce(
+    (sum, a) => sum + getAttendanceDayFactor(a, stdHours),
+    0
+  );
+  const presentDays = Math.round(rawEquivalentPresentDays * 100) / 100;
+  const absentDays = memberAtt.filter(
+    (a) => a.status === 'A' || (a.status === 'P' && safeNumber(a.workingHours, stdHours) <= 0)
+  ).length;
+  const totalMarkedDays = memberAtt.filter((a) => a.status === 'P' || a.status === 'A').length;
+  const attendancePercent =
+    totalMarkedDays > 0
+      ? Math.min(100, Math.round((rawEquivalentPresentDays / totalMarkedDays) * 1000) / 10)
+      : 0;
 
   const workingHours =
     Math.round(
-      memberAtt.reduce((sum, a) => sum + (a.status === 'P' ? safeNumber(a.workingHours, 0) : 0), 0) * 100
+      memberAtt.reduce(
+        (sum, a) => sum + (a.status === 'P' ? safeNumber(a.workingHours, stdHours) : 0),
+        0
+      ) * 100
     ) / 100;
 
   // Overtime hours come from explicit overtimeRecords + any attendance otHours not duplicated
@@ -164,7 +261,7 @@ export function computeMemberFinancialSummary(
   const extraAttOtPay = extraAttOtHours * memberOtRate;
   const totalOtEarned = Math.round((recordOtPay + extraAttOtPay) * 100) / 100;
 
-  const totalSalaryEarned = Math.round(presentDays * memberDailyRate * 100) / 100;
+  const totalSalaryEarned = Math.round(rawEquivalentPresentDays * memberDailyRate * 100) / 100;
   const grossEarned = Math.round((totalSalaryEarned + totalOtEarned) * 100) / 100;
 
   const normalAdvanceGiven = memberAdv

@@ -3,7 +3,9 @@ import { Download, FileText, Printer, Share2, Trash2 } from 'lucide-react';
 import {
   computeMemberFinancialSummary,
   formatCurrency,
+  getBalanceVisuals,
   getMonthRange,
+  getStandardWorkHours,
   getWeekRange,
   todayISO,
 } from '../lib/accounting';
@@ -20,6 +22,7 @@ import {
 import { TRANSLATIONS } from '../lib/i18n';
 import type {
   AdvanceTransaction,
+  AppSettings,
   AttendanceRecord,
   Language,
   Member,
@@ -28,6 +31,7 @@ import type {
   PeriodType,
   SalarySlip,
 } from '../types';
+import { BalanceStatusBadge } from './BalanceStatusBadge';
 import { ConfirmDialog } from './ConfirmDialog';
 
 interface SalaryViewProps {
@@ -38,6 +42,7 @@ interface SalaryViewProps {
   advances: AdvanceTransaction[];
   payments: PaymentTransaction[];
   slips: SalarySlip[];
+  settings: AppSettings | null;
   onToast: (msg: string, type?: 'success' | 'error') => void;
 }
 
@@ -49,10 +54,12 @@ export const SalaryView: React.FC<SalaryViewProps> = ({
   advances,
   payments,
   slips,
+  settings,
   onToast,
 }) => {
   const t = TRANSLATIONS[lang];
   const today = todayISO();
+  const stdHours = getStandardWorkHours(settings?.standardWorkHours);
   const [periodType, setPeriodType] = useState<PeriodType>('weekly');
   const [weekAnchor, setWeekAnchor] = useState(today);
   const [monthVal, setMonthVal] = useState(today.slice(0, 7));
@@ -76,12 +83,20 @@ export const SalaryView: React.FC<SalaryViewProps> = ({
 
   const rows = useMemo(() => {
     return members.map((m) =>
-      computeMemberFinancialSummary(m, attendance, overtime, advances, payments, {
-        startDate: range.startDate,
-        endDate: range.endDate,
-      })
+      computeMemberFinancialSummary(
+        m,
+        attendance,
+        overtime,
+        advances,
+        payments,
+        {
+          startDate: range.startDate,
+          endDate: range.endDate,
+        },
+        stdHours
+      )
     );
-  }, [members, attendance, overtime, advances, payments, range]);
+  }, [members, attendance, overtime, advances, payments, range, stdHours]);
 
   const totals = useMemo(() => {
     return rows.reduce(
@@ -270,60 +285,57 @@ export const SalaryView: React.FC<SalaryViewProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {rows.map((r) => (
-                <tr key={r.member.memberId} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40">
-                  <td className="px-4 py-3">
-                    <p className="font-semibold text-slate-900 dark:text-white">{r.member.fullName}</p>
-                    <p className="text-[11px] text-slate-500">{r.member.memberCode}</p>
-                  </td>
-                  <td className="px-3 py-3 text-right font-mono tabular-nums">
-                    {r.presentDays} / {r.absentDays}
-                  </td>
-                  <td className="px-3 py-3 text-right font-mono tabular-nums">
-                    {formatCurrency(r.totalSalaryEarned)}
-                  </td>
-                  <td className="px-3 py-3 text-right font-mono tabular-nums">
-                    {formatCurrency(r.totalOtEarned)}
-                  </td>
-                  <td className="px-3 py-3 text-right font-mono font-bold tabular-nums">
-                    {formatCurrency(r.grossEarned)}
-                  </td>
-                  <td className="px-3 py-3 text-right font-mono tabular-nums text-amber-600">
-                    {formatCurrency(r.normalAdvanceNet)}
-                  </td>
-                  <td className="px-3 py-3 text-right font-mono tabular-nums text-amber-600">
-                    {formatCurrency(r.cookingAdvanceNet)}
-                  </td>
-                  <td className="px-3 py-3 text-right font-mono tabular-nums">
-                    {formatCurrency(r.salaryPaymentsGiven)}
-                  </td>
-                  <td className="px-3 py-3 text-right">
-                    <p
-                      className={`font-mono font-bold tabular-nums ${
-                        r.balanceDirection === 'YOU OWE MEMBER'
-                          ? 'text-emerald-600'
-                          : r.balanceDirection === 'MEMBER OWES YOU'
-                            ? 'text-red-600'
-                            : 'text-slate-500'
-                      }`}
-                    >
-                      {formatCurrency(r.absBalance)}
-                    </p>
-                    <p className="text-[10px] text-slate-500">{r.balanceDirection}</p>
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <button
-                      type="button"
-                      disabled={generatingId === r.member.memberId}
-                      onClick={() => handleSaveAndDownload(r)}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-[#0B1F3A] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#132E54] disabled:opacity-50 whitespace-nowrap"
-                    >
-                      <FileText className="h-3.5 w-3.5" />
-                      <span>Generate & PDF</span>
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {rows.map((r) => {
+                const balVisual = getBalanceVisuals(r.balanceDirection);
+                return (
+                  <tr key={r.member.memberId} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40">
+                    <td className="px-4 py-3">
+                      <p className="font-semibold text-slate-900 dark:text-white">{r.member.fullName}</p>
+                      <p className="text-[11px] text-slate-500">{r.member.memberCode}</p>
+                    </td>
+                    <td className="px-3 py-3 text-right font-mono tabular-nums">
+                      {r.presentDays} / {r.absentDays}
+                    </td>
+                    <td className="px-3 py-3 text-right font-mono tabular-nums">
+                      {formatCurrency(r.totalSalaryEarned)}
+                    </td>
+                    <td className="px-3 py-3 text-right font-mono tabular-nums">
+                      {formatCurrency(r.totalOtEarned)}
+                    </td>
+                    <td className="px-3 py-3 text-right font-mono font-bold tabular-nums">
+                      {formatCurrency(r.grossEarned)}
+                    </td>
+                    <td className="px-3 py-3 text-right font-mono tabular-nums text-amber-600">
+                      {formatCurrency(r.normalAdvanceNet)}
+                    </td>
+                    <td className="px-3 py-3 text-right font-mono tabular-nums text-amber-600">
+                      {formatCurrency(r.cookingAdvanceNet)}
+                    </td>
+                    <td className="px-3 py-3 text-right font-mono tabular-nums">
+                      {formatCurrency(r.salaryPaymentsGiven)}
+                    </td>
+                    <td className="px-3 py-3 text-right">
+                      <p className={`font-mono font-bold tabular-nums ${balVisual.amountTextClass}`}>
+                        {formatCurrency(r.absBalance)}
+                      </p>
+                      <div className="mt-1 flex justify-end">
+                        <BalanceStatusBadge direction={r.balanceDirection} lang={lang} />
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        type="button"
+                        disabled={generatingId === r.member.memberId}
+                        onClick={() => handleSaveAndDownload(r)}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-[#0B1F3A] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#132E54] disabled:opacity-50 whitespace-nowrap"
+                      >
+                        <FileText className="h-3.5 w-3.5" />
+                        <span>Generate & PDF</span>
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -342,16 +354,23 @@ export const SalaryView: React.FC<SalaryViewProps> = ({
           </div>
         ) : (
           <div className="divide-y divide-slate-100 dark:divide-slate-800">
-            {slips.map((slip) => (
-              <div key={slip.slipId} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5">
-                <div>
-                  <p className="text-sm font-bold text-slate-900 dark:text-white">
-                    {slip.memberName} ({slip.memberCode})
-                  </p>
-                  <p className="text-xs text-slate-500">
-                    {slip.periodLabel} · Net: {formatCurrency(Math.abs(slip.finalBalance))} ({slip.balanceDirection})
-                  </p>
-                </div>
+            {slips.map((slip) => {
+              const slipVisual = getBalanceVisuals(slip.balanceDirection);
+              return (
+                <div key={slip.slipId} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5">
+                  <div>
+                    <p className="text-sm font-bold text-slate-900 dark:text-white">
+                      {slip.memberName} ({slip.memberCode})
+                    </p>
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                      <span>{slip.periodLabel}</span>
+                      <span>·</span>
+                      <span className={`font-mono font-bold ${slipVisual.amountTextClass}`}>
+                        {formatCurrency(Math.abs(slip.finalBalance))}
+                      </span>
+                      <BalanceStatusBadge direction={slip.balanceDirection} lang={lang} />
+                    </div>
+                  </div>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
@@ -386,7 +405,8 @@ export const SalaryView: React.FC<SalaryViewProps> = ({
                   </button>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

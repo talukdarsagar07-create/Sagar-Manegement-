@@ -158,7 +158,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 flex flex-col">
       {/* Top Bar */}
-      <header className="flex items-center justify-between gap-4 border-b border-slate-200 bg-white px-4 py-3 sm:px-8 dark:border-slate-800 dark:bg-slate-900">
+      <header className="sticky top-0 z-30 flex items-center justify-between gap-4 border-b border-slate-200 bg-white/95 px-4 header-safe backdrop-blur-md sm:px-8 dark:border-slate-800 dark:bg-slate-900/95">
         <div className="flex items-center gap-3 min-w-0">
           <img
             src={logoUrl}
